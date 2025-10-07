@@ -8,6 +8,7 @@
   ],
   "scripts": {
     "deploy:cloudbase": "node scripts/deploy-cloudbase.cjs",
+    "dev": "pnpm --parallel --filter backend --filter frontend dev",
     "dev:frontend": "pnpm --filter frontend dev",
     "dev:backend": "pnpm --filter backend dev",
     "build:frontend": "pnpm --filter frontend build",
