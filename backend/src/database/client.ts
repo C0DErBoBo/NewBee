@@ -9,17 +9,19 @@ export const pool = new Pool({
 
 export async function migrate() {
   const migrationSql = `
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
     CREATE TABLE IF NOT EXISTS users (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      phone VARCHAR(20),
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      phone VARCHAR(20) UNIQUE,
       wechat_openid VARCHAR(64),
-      password_hash TEXT,
+      display_name TEXT,
       role VARCHAR(32) NOT NULL DEFAULT 'organizer',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS competitions (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
       name TEXT NOT NULL,
       location TEXT,
       start_at TIMESTAMPTZ,
@@ -28,6 +30,26 @@ export async function migrate() {
       created_by UUID REFERENCES users(id),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS refresh_tokens (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS verification_codes (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      phone VARCHAR(20) NOT NULL,
+      code_hash TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
+    CREATE INDEX IF NOT EXISTS idx_verification_codes_phone ON verification_codes(phone);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wechat_openid ON users(wechat_openid) WHERE wechat_openid IS NOT NULL;
   `;
   await pool.query(migrationSql);
 }
