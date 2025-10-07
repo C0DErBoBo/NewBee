@@ -50,6 +50,38 @@ export async function migrate() {
     CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
     CREATE INDEX IF NOT EXISTS idx_verification_codes_phone ON verification_codes(phone);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wechat_openid ON users(wechat_openid) WHERE wechat_openid IS NOT NULL;
+
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS display_name TEXT,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'role'
+      ) THEN
+        ALTER TABLE users ADD COLUMN role VARCHAR(32) DEFAULT 'organizer';
+      END IF;
+      UPDATE users SET role = 'organizer' WHERE role IS NULL;
+      ALTER TABLE users ALTER COLUMN role SET DEFAULT 'organizer';
+    END $$;
+
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'users_phone_key'
+      ) THEN
+        ALTER TABLE users ADD CONSTRAINT users_phone_key UNIQUE (phone);
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'users_wechat_openid_key'
+      ) THEN
+        ALTER TABLE users ADD CONSTRAINT users_wechat_openid_key UNIQUE (wechat_openid);
+      END IF;
+    END $$;
   `;
   await pool.query(migrationSql);
 }
