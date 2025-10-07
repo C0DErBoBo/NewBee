@@ -5,6 +5,7 @@ import { authGuard, AuthenticatedRequest } from '../middleware/authGuard';
 import { pool } from '../database/client';
 
 const adminRouter = Router();
+const ROLE_OPTIONS = ['admin', 'organizer', 'team'] as const;
 
 adminRouter.use(authGuard);
 
@@ -134,6 +135,61 @@ adminRouter.get('/teams/export', async (_req, res, next) => {
     next(error);
   }
 });
+
+adminRouter.get('/accounts', async (_req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `
+        SELECT id, phone, display_name, role, created_at
+        FROM users
+        ORDER BY created_at DESC
+      `
+    );
+    res.json({
+      accounts: rows.map((row) => ({
+        id: row.id,
+        phone: row.phone,
+        displayName: row.display_name,
+        role: row.role,
+        createdAt: row.created_at
+      }))
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+const updateRoleSchema = z.object({
+  role: z.enum(ROLE_OPTIONS)
+});
+
+adminRouter.patch(
+  '/accounts/:userId/role',
+  async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const userId = z.string().uuid().parse(req.params.userId);
+      const { role } = updateRoleSchema.parse(req.body);
+
+      const { rowCount, rows } = await pool.query(
+        `
+          UPDATE users
+          SET role = $2
+          WHERE id = $1
+          RETURNING id, phone, display_name, role, created_at
+        `,
+        [userId, role]
+      );
+
+      if (rowCount === 0) {
+        return res.status(404).json({ message: '账号不存在' });
+      }
+
+      res.json({ account: rows[0] });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 const resetSchema = z.object({
   userId: z.string().uuid()

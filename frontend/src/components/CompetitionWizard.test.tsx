@@ -7,6 +7,7 @@ import * as competitionService from '@/services/competitions';
 vi.spyOn(competitionService, 'fetchEventTemplates').mockResolvedValue([
   { name: '100m', category: 'track', unitType: 'individual' }
 ]);
+vi.spyOn(competitionService, 'fetchCompetitions').mockResolvedValue([]);
 vi.spyOn(competitionService, 'createCompetition').mockResolvedValue({
   id: 'comp-1'
 });
@@ -28,7 +29,9 @@ describe('CompetitionWizard', () => {
     await userEvent.click(nextButton);
 
     await waitFor(() =>
-      expect(screen.getByText('选择本次赛事的竞赛项目')).toBeInTheDocument()
+      expect(
+        screen.getByText('选择或新增竞赛项目，每个项目可标记为团体或个人。')
+      ).toBeInTheDocument()
     );
   });
 });

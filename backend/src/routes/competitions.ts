@@ -45,6 +45,8 @@ const ruleSchema = z.object({
 const createCompetitionSchema = z.object({
   name: z.string().min(1),
   location: z.string().optional(),
+  signupStartAt: z.string().datetime(),
+  signupEndAt: z.string().datetime(),
   startAt: z.string().datetime().optional(),
   endAt: z.string().datetime().optional(),
   config: z.record(z.unknown()).default({}).optional(),
@@ -58,7 +60,18 @@ const updateCompetitionSchema = createCompetitionSchema.partial();
 async function fetchCompetition(competitionId: string) {
   const competitionResult = await pool.query(
     `
-      SELECT id, name, location, start_at, end_at, config, created_by, created_at
+      SELECT id,
+             name,
+             location,
+             start_at,
+             end_at,
+             signup_start_at,
+             signup_end_at,
+             config,
+             created_by,
+             created_at,
+             0::INT AS participant_count,
+             0::INT AS team_count
       FROM competitions
       WHERE id = $1
     `,
@@ -106,8 +119,14 @@ async function fetchCompetition(competitionId: string) {
     startAt: competition.start_at,
     endAt: competition.end_at,
     config: competition.config ?? {},
+    signupStartAt: competition.signup_start_at,
+    signupEndAt: competition.signup_end_at,
     createdBy: competition.created_by,
     createdAt: competition.created_at,
+    stats: {
+      participantCount: competition.participant_count ?? 0,
+      teamCount: competition.team_count ?? 0
+    },
     events: eventsResult.rows.map((row) => ({
       id: row.id,
       name: row.name,
@@ -175,7 +194,17 @@ competitionRouter.get('/', authGuard, async (_req, res, next) => {
   try {
     const { rows } = await pool.query(
       `
-        SELECT id, name, location, start_at, end_at, created_by, created_at
+        SELECT id,
+               name,
+               location,
+               start_at,
+               end_at,
+               signup_start_at,
+               signup_end_at,
+               created_by,
+               created_at,
+               0::INT AS participant_count,
+               0::INT AS team_count
         FROM competitions
         ORDER BY created_at DESC
       `
@@ -187,8 +216,14 @@ competitionRouter.get('/', authGuard, async (_req, res, next) => {
         location: row.location,
         startAt: row.start_at,
         endAt: row.end_at,
+        signupStartAt: row.signup_start_at,
+        signupEndAt: row.signup_end_at,
         createdBy: row.created_by,
-        createdAt: row.created_at
+        createdAt: row.created_at,
+        stats: {
+          participantCount: row.participant_count ?? 0,
+          teamCount: row.team_count ?? 0
+        }
       }))
     });
   } catch (error) {
@@ -207,8 +242,9 @@ competitionRouter.post(
 
       const competitionResult = await client.query(
         `
-          INSERT INTO competitions (name, location, start_at, end_at, config, created_by)
-          VALUES ($1, $2, $3, $4, $5, $6)
+          INSERT INTO competitions
+            (name, location, start_at, end_at, signup_start_at, signup_end_at, config, created_by)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
           RETURNING id
         `,
         [
@@ -216,6 +252,8 @@ competitionRouter.post(
           payload.location ?? null,
           payload.startAt ?? null,
           payload.endAt ?? null,
+          payload.signupStartAt,
+          payload.signupEndAt,
           payload.config ?? {},
           req.user!.id
         ]
@@ -339,7 +377,9 @@ competitionRouter.patch(
                 location = COALESCE($3, location),
                 start_at = COALESCE($4, start_at),
                 end_at = COALESCE($5, end_at),
-                config = COALESCE($6, config)
+                signup_start_at = COALESCE($6, signup_start_at),
+                signup_end_at = COALESCE($7, signup_end_at),
+                config = COALESCE($8, config)
             WHERE id = $1
           `,
           [
@@ -348,6 +388,8 @@ competitionRouter.patch(
             payload.location ?? null,
             payload.startAt ?? null,
             payload.endAt ?? null,
+            payload.signupStartAt ?? null,
+            payload.signupEndAt ?? null,
             payload.config ?? null
           ]
         );
@@ -442,11 +484,11 @@ competitionRouter.post(
     try {
       const competitionId = z.string().uuid().parse(req.params.competitionId);
       await ensureCompetitionOwnership(competitionId, req.user!);
-      const payload = eventSchema.parse(req.body);
+    const payload = eventSchema.parse(req.body);
 
-      const result = await pool.query(
-        `
-          INSERT INTO competition_events (competition_id, name, category, unit_type, is_custom, config)
+    const result = await pool.query(
+      `
+        INSERT INTO competition_events (competition_id, name, category, unit_type, is_custom, config)
           VALUES ($1, $2, $3, $4, $5, $6)
           RETURNING id, competition_id, name, category, unit_type, is_custom, config, created_at
         `,

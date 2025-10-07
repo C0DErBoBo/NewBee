@@ -63,21 +63,25 @@ describe('Auth routes', () => {
 
   it('should login with phone code', async () => {
     mockVerifyCode.mockResolvedValueOnce(true);
-    mockPoolQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes('INSERT INTO users')) {
-        return {
-          rows: [
-            {
-              id: 'user-1',
-              phone: '13800000000',
-              display_name: '用户0000',
-              role: 'organizer'
-            }
-          ]
-        };
-      }
-      return { rows: [] };
-    });
+    mockPoolQuery
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'user-1',
+            phone: '13800000000'
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'user-1',
+            phone: '13800000000',
+            display_name: '用户0000',
+            role: 'organizer'
+          }
+        ]
+      });
     mockGenerateTokens.mockResolvedValueOnce({
       accessToken: 'access-token',
       refreshToken: 'refresh-token'

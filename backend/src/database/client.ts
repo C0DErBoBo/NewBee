@@ -27,6 +27,8 @@ export async function migrate() {
       location TEXT,
       start_at TIMESTAMPTZ,
       end_at TIMESTAMPTZ,
+      signup_start_at TIMESTAMPTZ,
+      signup_end_at TIMESTAMPTZ,
       config JSONB,
       created_by UUID REFERENCES users(id),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -130,6 +132,10 @@ export async function migrate() {
         ALTER TABLE users ADD CONSTRAINT users_wechat_openid_key UNIQUE (wechat_openid);
       END IF;
     END $$;
+
+    ALTER TABLE competitions
+      ADD COLUMN IF NOT EXISTS signup_start_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS signup_end_at TIMESTAMPTZ;
   `;
   await pool.query(migrationSql);
 }

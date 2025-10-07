@@ -3,12 +3,19 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from './ui/card';
+import {
+  Card,
+  CardContent,
+  CardFooter,
+  CardHeader,
+  CardTitle
+} from './ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import {
   CompetitionEventInput,
   CompetitionGroupInput,
   CompetitionRuleInput,
+  CompetitionSummary,
   createCompetition,
   fetchCompetitions,
   fetchEventTemplates
@@ -42,46 +49,55 @@ const defaultRules: CompetitionRuleInput = {
   }
 };
 
+const DEFAULT_GROUPS: CompetitionGroupInput[] = [
+  { name: '男子组', gender: 'male', ageBracket: '18-25', identityType: '学生' },
+  { name: '女子组', gender: 'female', ageBracket: '18-25', identityType: '学生' }
+];
+
+const DATE_INPUT_FORMAT = 'datetime-local';
+
+const toIsoString = (value: string) =>
+  value ? new Date(value).toISOString() : undefined;
+
+const currentIso = () => new Date().toISOString().slice(0, 16);
+
 export function CompetitionWizard({ onCreated }: WizardProps) {
   const [currentStep, setCurrentStep] = useState<StepKey>('basic');
   const [name, setName] = useState('校运会');
   const [location, setLocation] = useState('田径场');
-  const [startAt, setStartAt] = useState('');
-  const [endAt, setEndAt] = useState('');
+  const [signupStartAt, setSignupStartAt] = useState(currentIso());
+  const [signupEndAt, setSignupEndAt] = useState(currentIso());
+  const [eventStartAt, setEventStartAt] = useState('');
+  const [eventEndAt, setEventEndAt] = useState('');
   const [selectedEvents, setSelectedEvents] = useState<CompetitionEventInput[]>([]);
-  const [customEvent, setCustomEvent] = useState({
-    name: '',
-    category: 'track' as CompetitionEventInput['category'],
-    unitType: 'individual' as CompetitionEventInput['unitType']
-  });
-  const [groups, setGroups] = useState<CompetitionGroupInput[]>([
-    {
-      name: '男子组',
-      gender: 'male',
-      ageBracket: '18-25',
-      identityType: '学生'
-    },
-    {
-      name: '女子组',
-      gender: 'female',
-      ageBracket: '18-25',
-      identityType: '学生'
-    }
-  ]);
+  const [customEvent, setCustomEvent] = useState<{
+    name: string;
+    category: CompetitionEventInput['category'];
+    unitType: CompetitionEventInput['unitType'];
+  }>({ name: '', category: 'track', unitType: 'individual' });
+  const [groups, setGroups] = useState<CompetitionGroupInput[]>(DEFAULT_GROUPS);
   const [rules, setRules] = useState<CompetitionRuleInput>(defaultRules);
   const [submissionMessage, setSubmissionMessage] = useState<string | null>(null);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [competitionList, setCompetitionList] = useState<CompetitionSummary[]>([]);
 
   const templatesQuery = useQuery({
     queryKey: ['event-templates'],
     queryFn: fetchEventTemplates
   });
 
+  const listQuery = useQuery({
+    queryKey: ['competitions'],
+    queryFn: fetchCompetitions,
+    onSuccess: setCompetitionList
+  });
+
   const createMutation = useMutation({
     mutationFn: createCompetition,
     onSuccess: (competition) => {
-      setSubmissionMessage('赛事创建成功！');
+      setSubmissionMessage('赛事创建成功');
       setSubmissionError(null);
+      listQuery.refetch();
       if (onCreated) {
         onCreated(competition.id);
       }
@@ -99,22 +115,26 @@ export function CompetitionWizard({ onCreated }: WizardProps) {
     }
   }, [templatesQuery.data, selectedEvents.length]);
 
-  const competitionPayload = useMemo(() => {
-    return {
-      name,
-      location,
-      startAt: startAt ? new Date(startAt).toISOString() : undefined,
-      endAt: endAt ? new Date(endAt).toISOString() : undefined,
-      events: selectedEvents,
-      groups,
-      rules
-    };
-  }, [name, location, startAt, endAt, selectedEvents, groups, rules]);
+  const competitionPayload = useMemo(() => ({
+    name,
+    location,
+    signupStartAt: toIsoString(signupStartAt)!,
+    signupEndAt: toIsoString(signupEndAt)!,
+    startAt: toIsoString(eventStartAt),
+    endAt: toIsoString(eventEndAt),
+    events: selectedEvents,
+    groups,
+    rules
+  }), [name, location, signupStartAt, signupEndAt, eventStartAt, eventEndAt, selectedEvents, groups, rules]);
 
   const canProceed = useMemo(() => {
     switch (currentStep) {
       case 'basic':
-        return name.trim().length > 0;
+        return (
+          name.trim().length > 0 &&
+          signupStartAt.trim().length > 0 &&
+          signupEndAt.trim().length > 0
+        );
       case 'events':
         return selectedEvents.length > 0;
       case 'groups':
@@ -122,7 +142,7 @@ export function CompetitionWizard({ onCreated }: WizardProps) {
       default:
         return true;
     }
-  }, [currentStep, name, selectedEvents.length, groups.length]);
+  }, [currentStep, name, signupStartAt, signupEndAt, selectedEvents.length, groups.length]);
 
   const handleAddCustomEvent = () => {
     if (!customEvent.name.trim()) return;
@@ -149,7 +169,7 @@ export function CompetitionWizard({ onCreated }: WizardProps) {
     ]);
   };
 
-  const handleDeleteGroup = (index: number) => {
+  const handleRemoveGroup = (index: number) => {
     setGroups((prev) => prev.filter((_, idx) => idx !== index));
   };
 
@@ -173,6 +193,7 @@ export function CompetitionWizard({ onCreated }: WizardProps) {
               </TabsTrigger>
             ))}
           </TabsList>
+
           <TabsContent value="basic" className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="competition-name">赛事名称</Label>
@@ -181,6 +202,7 @@ export function CompetitionWizard({ onCreated }: WizardProps) {
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 placeholder="例如：2025 校园田径运动会"
+                required
               />
             </div>
             <div className="space-y-2">
@@ -193,28 +215,51 @@ export function CompetitionWizard({ onCreated }: WizardProps) {
             </div>
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="competition-start">开始日期</Label>
+                <Label htmlFor="signup-start">报名开始时间</Label>
                 <Input
-                  id="competition-start"
-                  type="date"
-                  value={startAt}
-                  onChange={(event) => setStartAt(event.target.value)}
+                  id="signup-start"
+                  type={DATE_INPUT_FORMAT}
+                  value={signupStartAt}
+                  onChange={(event) => setSignupStartAt(event.target.value)}
+                  required
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="competition-end">结束日期</Label>
+                <Label htmlFor="signup-end">报名结束时间</Label>
                 <Input
-                  id="competition-end"
-                  type="date"
-                  value={endAt}
-                  onChange={(event) => setEndAt(event.target.value)}
+                  id="signup-end"
+                  type={DATE_INPUT_FORMAT}
+                  value={signupEndAt}
+                  onChange={(event) => setSignupEndAt(event.target.value)}
+                  required
+                />
+              </div>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="event-start">比赛开始时间</Label>
+                <Input
+                  id="event-start"
+                  type={DATE_INPUT_FORMAT}
+                  value={eventStartAt}
+                  onChange={(event) => setEventStartAt(event.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="event-end">比赛结束时间</Label>
+                <Input
+                  id="event-end"
+                  type={DATE_INPUT_FORMAT}
+                  value={eventEndAt}
+                  onChange={(event) => setEventEndAt(event.target.value)}
                 />
               </div>
             </div>
           </TabsContent>
+
           <TabsContent value="events" className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              选择本次赛事的竞赛项目，可勾选标准模板或新增自定义项目。
+              选择或新增竞赛项目，每个项目可标记为团体或个人。
             </p>
             <div className="grid gap-2 md:grid-cols-2">
               {templatesQuery.data?.map((event) => {
@@ -283,34 +328,26 @@ export function CompetitionWizard({ onCreated }: WizardProps) {
                   <option value="team">团体赛</option>
                 </select>
               </div>
-              <Button
-                type="button"
-                variant="secondary"
-                className="mt-2"
-                onClick={handleAddCustomEvent}
-              >
+              <Button type="button" variant="secondary" onClick={handleAddCustomEvent}>
                 添加项目
               </Button>
             </div>
           </TabsContent>
+
           <TabsContent value="groups" className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              设置参赛组别、报名限制和团队人数等信息。
+              配置参赛组别、报名限制和团队人数等信息。
             </p>
             <div className="space-y-3">
               {groups.map((group, index) => (
-                <div key={index} className="rounded-md border border-border p-4">
+                <div key={index} className="rounded-md border border-border p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium">{group.name}</span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      onClick={() => handleDeleteGroup(index)}
-                    >
+                    <Button variant="ghost" type="button" onClick={() => handleRemoveGroup(index)}>
                       删除
                     </Button>
                   </div>
-                  <div className="mt-3 grid gap-3 md:grid-cols-3">
+                  <div className="grid gap-3 md:grid-cols-3">
                     <Input
                       value={group.name}
                       onChange={(event) =>
@@ -355,7 +392,7 @@ export function CompetitionWizard({ onCreated }: WizardProps) {
                       }
                     />
                   </div>
-                  <div className="mt-3 grid gap-3 md:grid-cols-3">
+                  <div className="grid gap-3 md:grid-cols-3">
                     <Input
                       placeholder="年龄段"
                       value={group.ageBracket ?? ''}
@@ -415,6 +452,7 @@ export function CompetitionWizard({ onCreated }: WizardProps) {
               </Button>
             </div>
           </TabsContent>
+
           <TabsContent value="rules" className="space-y-4">
             <p className="text-sm text-muted-foreground">
               设置竞赛流程、评分方式和异常处理规则，可根据赛事需求随时调整。
@@ -459,9 +497,10 @@ export function CompetitionWizard({ onCreated }: WizardProps) {
               />
             </div>
           </TabsContent>
+
           <TabsContent value="confirm" className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              确认以下配置后点击提交。提交后仍可在赛事管理中继续调整。
+              确认以下配置后点击提交。提交后仍可进入赛事管理进行修改。
             </p>
             <pre className="max-h-64 overflow-auto rounded-md bg-muted p-4 text-xs">
               {JSON.stringify(competitionPayload, null, 2)}
@@ -498,26 +537,52 @@ export function CompetitionWizard({ onCreated }: WizardProps) {
               下一步
             </Button>
           ) : (
-            <Button
-              type="button"
-              onClick={handleSubmit}
-              disabled={createMutation.isPending}
-            >
+            <Button type="button" onClick={handleSubmit} disabled={createMutation.isPending}>
               {createMutation.isPending ? '提交中...' : '提交赛事配置'}
             </Button>
           )}
         </div>
         <div className="flex-1 text-right text-sm">
           {submissionMessage && (
-            <span className="text-green-600 dark:text-green-500">
-              {submissionMessage}
-            </span>
+            <span className="text-green-600 dark:text-green-500">{submissionMessage}</span>
           )}
-          {submissionError && (
-            <span className="text-destructive">{submissionError}</span>
-          )}
+          {submissionError && <span className="text-destructive">{submissionError}</span>}
         </div>
       </CardFooter>
+
+      {competitionList.length > 0 && (
+        <CardFooter className="flex-col items-start gap-3 border-t border-border bg-muted/30 p-6">
+          <h3 className="text-sm font-semibold">近期创建赛事</h3>
+          <div className="w-full overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="text-left text-muted-foreground">
+                <tr>
+                  <th className="py-2 pr-4">名称</th>
+                  <th className="py-2 pr-4">报名时间</th>
+                  <th className="py-2 pr-4">比赛时间</th>
+                  <th className="py-2 pr-4">地点</th>
+                  <th className="py-2 pr-4 text-right">报名人数 / 团队</th>
+                </tr>
+              </thead>
+              <tbody>
+                {competitionList.map((item) => (
+                  <tr key={item.id} className="border-t border-border">
+                    <td className="py-2 pr-4 font-medium">{item.name}</td>
+                    <td className="py-2 pr-4">
+                      {formatRange(item.signupStartAt, item.signupEndAt)}
+                    </td>
+                    <td className="py-2 pr-4">{formatRange(item.startAt, item.endAt)}</td>
+                    <td className="py-2 pr-4">{item.location ?? '-'}</td>
+                    <td className="py-2 pr-4 text-right">
+                      {item.stats.participantCount} / {item.stats.teamCount}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardFooter>
+      )}
     </Card>
   );
 }
@@ -529,4 +594,11 @@ function safeJsonParse<T>(value: string, fallback: T | undefined): T | undefined
     console.warn('JSON 解析失败', error);
     return fallback;
   }
+}
+
+function formatRange(start?: string, end?: string) {
+  if (!start && !end) return '-';
+  const startText = start ? new Date(start).toLocaleString() : '待定';
+  const endText = end ? new Date(end).toLocaleString() : '待定';
+  return `${startText} ~ ${endText}`;
 }

@@ -58,8 +58,12 @@ describe('Competition routes', () => {
           location: '体育场',
           start_at: null,
           end_at: null,
+          signup_start_at: new Date().toISOString(),
+          signup_end_at: new Date().toISOString(),
           created_by: 'user-1',
-          created_at: new Date().toISOString()
+          created_at: new Date().toISOString(),
+          participant_count: 0,
+          team_count: 0
         }
       ]
     });
@@ -90,9 +94,13 @@ describe('Competition routes', () => {
               location: '操场',
               start_at: null,
               end_at: null,
+              signup_start_at: new Date().toISOString(),
+              signup_end_at: new Date().toISOString(),
               config: {},
               created_by: 'user-1',
-              created_at: new Date().toISOString()
+              created_at: new Date().toISOString(),
+              participant_count: 0,
+              team_count: 0
             }
           ]
         };
@@ -113,6 +121,8 @@ describe('Competition routes', () => {
       .post('/api/competitions')
       .send({
         name: '校运会',
+        signupStartAt: new Date().toISOString(),
+        signupEndAt: new Date(Date.now() + 3600 * 1000).toISOString(),
         events: [
           { name: '100m', category: 'track', unitType: 'individual' }
         ],

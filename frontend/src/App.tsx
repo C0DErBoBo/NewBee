@@ -15,16 +15,23 @@ import {
 } from './components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 import {
+  fetchCompetitions,
+  CompetitionSummary
+} from './services/competitions';
+import {
   loginWithPhone,
   loginWithWechat,
   requestPhoneCode
 } from './services/auth';
 import { CompetitionWizard } from './components/CompetitionWizard';
-import { fetchCompetitions } from './services/competitions';
+import { fetchAccounts, updateAccountRole, AccountSummary } from './services/admin';
+
+type MainTab = 'competition' | 'account' | 'admin';
 
 export default function App() {
   const dispatch = useAppDispatch();
   const user = useAppSelector((state) => state.auth.user);
+  const isAdmin = user?.role === 'admin';
 
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
@@ -32,11 +39,24 @@ export default function App() {
   const [countdown, setCountdown] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<MainTab>('competition');
+
+  const competitionsQuery = useQuery({
+    queryKey: ['dashboard-competitions'],
+    queryFn: fetchCompetitions,
+    enabled: Boolean(user)
+  });
+
+  const accountsQuery = useQuery({
+    queryKey: ['admin-accounts'],
+    queryFn: fetchAccounts,
+    enabled: isAdmin
+  });
 
   const requestCodeMutation = useMutation({
     mutationFn: (phoneNumber: string) => requestPhoneCode(phoneNumber),
     onSuccess: () => {
-      setMessage('验证码已发送（开发环境下输出到服务端日志）');
+      setMessage('验证码已发送（开发环境支持使用指定测试码）');
       setError(null);
       setCountdown(60);
     },
@@ -51,6 +71,11 @@ export default function App() {
       dispatch(loginSuccess(data));
       setMessage('登录成功');
       setError(null);
+      setActiveTab('competition');
+      competitionsQuery.refetch();
+      if (isAdmin) {
+        accountsQuery.refetch();
+      }
     },
     onError: (err: unknown) => {
       setError(err instanceof Error ? err.message : '登录失败，请重试');
@@ -63,17 +88,23 @@ export default function App() {
       dispatch(loginSuccess(data));
       setMessage('微信登录成功（使用模拟 openId）');
       setError(null);
+      setActiveTab('competition');
+      competitionsQuery.refetch();
     },
     onError: (err: unknown) => {
       setError(err instanceof Error ? err.message : '微信登录失败，请重试');
     }
   });
 
-  const competitionsQuery = useQuery({
-    queryKey: ['competitions'],
-    queryFn: fetchCompetitions,
-    enabled: Boolean(user),
-    retry: false
+  const updateRoleMutation = useMutation({
+    mutationFn: ({ userId, role }: { userId: string; role: string }) =>
+      updateAccountRole(userId, role),
+    onSuccess: () => {
+      accountsQuery.refetch();
+    },
+    onError: (err: unknown) => {
+      setError(err instanceof Error ? err.message : '更新账号角色失败');
+    }
   });
 
   useEffect(() => {
@@ -95,9 +126,10 @@ export default function App() {
     }
   }, [user]);
 
-  const canSendCode = useMemo(() => {
-    return /^1\d{10}$/.test(phone) && countdown === 0;
-  }, [phone, countdown]);
+  const canSendCode = useMemo(() => /^1\d{10}$/.test(phone) && countdown === 0, [
+    phone,
+    countdown
+  ]);
 
   const handleSendCode = async () => {
     if (!canSendCode) return;
@@ -121,6 +153,9 @@ export default function App() {
     setMessage('已退出登录');
   };
 
+  const competitionData = competitionsQuery.data ?? [];
+  const accountData = accountsQuery.data ?? [];
+
   return (
     <main className="min-h-screen bg-background text-foreground">
       <header className="border-b border-border bg-card">
@@ -129,171 +164,300 @@ export default function App() {
           {user ? (
             <div className="flex items-center gap-3">
               <span className="text-sm text-muted-foreground">
-                欢迎，{user.displayName ?? user.phone ?? '未知用户'}
+                {user.displayName ?? user.phone ?? '未命名账号'} · {user.role}
               </span>
               <Button variant="outline" onClick={handleLogout}>
                 退出登录
               </Button>
             </div>
           ) : (
-            <span className="text-sm text-muted-foreground">尚未登录</span>
+            <span className="text-sm text-muted-foreground">请登录以继续</span>
           )}
         </div>
       </header>
 
-      <section className="container grid gap-8 py-12 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>快捷登录</CardTitle>
-            <CardDescription>
-              支持手机号验证码与模拟微信授权两种方式。
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Tabs defaultValue="phone">
-              <TabsList className="mb-4">
-                <TabsTrigger value="phone">手机号登录</TabsTrigger>
-                <TabsTrigger value="wechat">微信授权</TabsTrigger>
-              </TabsList>
-              <TabsContent value="phone">
-                <form className="space-y-4" onSubmit={handlePhoneLogin}>
-                  <div className="space-y-2">
-                    <Label htmlFor="phone">手机号</Label>
-                    <Input
-                      id="phone"
-                      value={phone}
-                      onChange={(event) => setPhone(event.target.value)}
-                      placeholder="请输入 11 位手机号"
-                      maxLength={11}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="code">验证码</Label>
-                    <div className="flex gap-2">
+      <section className="container py-12">
+        {!user ? (
+          <Card className="mx-auto max-w-3xl">
+            <CardHeader>
+              <CardTitle>快捷登录</CardTitle>
+              <CardDescription>支持手机号验证码与模拟微信授权登录。</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Tabs defaultValue="phone">
+                <TabsList className="mb-4">
+                  <TabsTrigger value="phone">手机号登录</TabsTrigger>
+                  <TabsTrigger value="wechat">微信授权</TabsTrigger>
+                </TabsList>
+                <TabsContent value="phone">
+                  <form className="space-y-4" onSubmit={handlePhoneLogin}>
+                    <div className="space-y-2">
+                      <Label htmlFor="phone">手机号</Label>
                       <Input
-                        id="code"
-                        value={code}
-                        onChange={(event) => setCode(event.target.value)}
-                        placeholder="输入 6 位验证码"
-                        maxLength={6}
+                        id="phone"
+                        value={phone}
+                        onChange={(event) => setPhone(event.target.value)}
+                        placeholder="请输入 11 位手机号"
+                        maxLength={11}
                         required
                       />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="code">验证码</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id="code"
+                          value={code}
+                          onChange={(event) => setCode(event.target.value)}
+                          placeholder="输入 6 位验证码"
+                          maxLength={6}
+                          required
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={handleSendCode}
+                          disabled={!canSendCode || requestCodeMutation.isPending}
+                        >
+                          {countdown > 0 ? `${countdown}s` : '发送验证码'}
+                        </Button>
+                      </div>
+                    </div>
+                    <Button type="submit" className="w-full" disabled={phoneLoginMutation.isPending}>
+                      {phoneLoginMutation.isPending ? '登录中...' : '立即登录'}
+                    </Button>
+                    <p className="text-xs text-muted-foreground">
+                      开发模式可直接输入测试验证码 <code>zxcasd</code>。
+                    </p>
+                  </form>
+                </TabsContent>
+                <TabsContent value="wechat">
+                  <form className="space-y-4" onSubmit={handleWechatLogin}>
+                    <div className="space-y-2">
+                      <Label htmlFor="wechat-code">微信临时代码</Label>
+                      <Input
+                        id="wechat-code"
+                        value={wechatCode}
+                        onChange={(event) => setWechatCode(event.target.value)}
+                        placeholder="开发阶段可输入任意字符串"
+                        required
+                      />
+                    </div>
+                    <Button type="submit" className="w-full" disabled={wechatLoginMutation.isPending}>
+                      {wechatLoginMutation.isPending ? '登录中...' : '授权登录'}
+                    </Button>
+                  </form>
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+            {(message || error) && (
+              <CardFooter className="flex-col items-start gap-2">
+                {message && (
+                  <p className="text-sm text-green-600 dark:text-green-500">{message}</p>
+                )}
+                {error && <p className="text-sm text-destructive">{error}</p>}
+              </CardFooter>
+            )}
+          </Card>
+        ) : (
+          <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as MainTab)}>
+            <TabsList className="mb-6">
+              <TabsTrigger value="competition">赛事管理</TabsTrigger>
+              <TabsTrigger value="account">账号信息</TabsTrigger>
+              {isAdmin && <TabsTrigger value="admin">账号管理</TabsTrigger>}
+            </TabsList>
+
+            <TabsContent value="competition" className="space-y-6">
+              <CompetitionWizard
+                onCreated={() => {
+                  competitionsQuery.refetch();
+                }}
+              />
+            </TabsContent>
+
+            <TabsContent value="account" className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>账号信息</CardTitle>
+                  <CardDescription>查看当前登录账号与赛事概况。</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <p className="text-sm text-muted-foreground">账号</p>
+                    <p className="text-lg font-semibold">
+                      {user.displayName ?? user.phone ?? '未命名账号'}
+                    </p>
+                    <p className="text-sm text-muted-foreground">角色：{user.role}</p>
+                    {user.phone && (
+                      <p className="text-sm text-muted-foreground">手机号：{user.phone}</p>
+                    )}
+                  </div>
+                  <div className="rounded-md border border-border p-4">
+                    <div className="mb-3 flex items-center justify-between">
+                      <h3 className="text-sm font-semibold">赛事列表</h3>
                       <Button
-                        type="button"
-                        variant="outline"
-                        onClick={handleSendCode}
-                        disabled={!canSendCode || requestCodeMutation.isPending}
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => competitionsQuery.refetch()}
+                        disabled={competitionsQuery.isFetching}
                       >
-                        {countdown > 0 ? `${countdown}s` : '发送验证码'}
+                        刷新
                       </Button>
                     </div>
-                  </div>
-                  <Button
-                    type="submit"
-                    className="w-full"
-                    disabled={phoneLoginMutation.isPending}
-                  >
-                    {phoneLoginMutation.isPending ? '登录中...' : '立即登录'}
-                  </Button>
-                </form>
-              </TabsContent>
-              <TabsContent value="wechat">
-                <form className="space-y-4" onSubmit={handleWechatLogin}>
-                  <div className="space-y-2">
-                    <Label htmlFor="wechat-code">微信临时代码</Label>
-                    <Input
-                      id="wechat-code"
-                      value={wechatCode}
-                      onChange={(event) => setWechatCode(event.target.value)}
-                      placeholder="开发阶段支持输入任意字符串"
-                      required
-                    />
-                  </div>
-                  <Button
-                    type="submit"
-                    className="w-full"
-                    disabled={wechatLoginMutation.isPending}
-                  >
-                    {wechatLoginMutation.isPending ? '登录中...' : '授权登录'}
-                  </Button>
-                </form>
-              </TabsContent>
-            </Tabs>
-          </CardContent>
-          {(message || error) && (
-            <CardFooter className="flex-col items-start gap-2">
-              {message && (
-                <p className="text-sm text-green-600 dark:text-green-500">
-                  {message}
-                </p>
-              )}
-              {error && <p className="text-sm text-destructive">{error}</p>}
-            </CardFooter>
-          )}
-        </Card>
-
-        <Card className="h-fit">
-          <CardHeader>
-            <CardTitle>账号信息</CardTitle>
-            <CardDescription>
-              登录后可继续配置赛事、角色权限与报名流程。
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {user ? (
-              <>
-                <div>
-                  <p className="text-sm text-muted-foreground">当前用户</p>
-                  <p className="text-lg font-semibold">
-                    {user.displayName ?? user.phone ?? '未填写昵称'}
-                  </p>
-                  <p className="text-sm text-muted-foreground">角色：{user.role}</p>
-                  {user.phone && (
-                    <p className="text-sm text-muted-foreground">
-                      手机号：{user.phone}
-                    </p>
-                  )}
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">赛事列表</p>
-                  {competitionsQuery.isLoading && (
-                    <p className="text-sm">加载中...</p>
-                  )}
-                  {!competitionsQuery.isLoading &&
-                    (competitionsQuery.data?.length ? (
-                      <ul className="space-y-1 text-sm">
-                        {competitionsQuery.data.map((competition) => (
-                          <li key={competition.id}>
-                            {competition.name}（{competition.location ?? '待定'}）
-                          </li>
-                        ))}
-                      </ul>
+                    {competitionsQuery.isLoading ? (
+                      <p className="text-sm text-muted-foreground">加载中...</p>
+                    ) : competitionData.length ? (
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full text-sm">
+                          <thead className="text-left text-muted-foreground">
+                            <tr>
+                              <th className="py-2 pr-4">名称</th>
+                              <th className="py-2 pr-4">报名时间</th>
+                              <th className="py-2 pr-4">比赛时间</th>
+                              <th className="py-2 pr-4">地点</th>
+                              <th className="py-2 pr-4 text-right">报名人数 / 团队</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {competitionData.map((item) => (
+                              <tr key={item.id} className="border-t border-border">
+                                <td className="py-2 pr-4 font-medium">{item.name}</td>
+                                <td className="py-2 pr-4">
+                                  {formatRange(item.signupStartAt, item.signupEndAt)}
+                                </td>
+                                <td className="py-2 pr-4">
+                                  {formatRange(item.startAt, item.endAt)}
+                                </td>
+                                <td className="py-2 pr-4">{item.location ?? '-'}</td>
+                                <td className="py-2 pr-4 text-right">
+                                  {item.stats.participantCount} / {item.stats.teamCount}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     ) : (
-                      <p className="text-sm text-muted-foreground">
-                        暂无赛事，欢迎创建新的赛事。
-                      </p>
-                    ))}
-                </div>
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                请先完成登录，以便继续配置赛事、管理报名及导出数据。
-              </p>
+                      <p className="text-sm text-muted-foreground">暂无赛事记录。</p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {isAdmin && (
+              <TabsContent value="admin" className="space-y-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>账号管理</CardTitle>
+                    <CardDescription>
+                      查看系统内的账号并调整角色权限。默认手机号 15521396332 拥有系统管理员权限。
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">
+                        共 {accountData.length} 个账号
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => accountsQuery.refetch()}
+                        disabled={accountsQuery.isFetching}
+                      >
+                        刷新
+                      </Button>
+                    </div>
+                    {accountsQuery.isLoading ? (
+                      <p className="text-sm text-muted-foreground">加载中...</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full text-sm">
+                          <thead className="text-left text-muted-foreground">
+                            <tr>
+                              <th className="py-2 pr-4">账号</th>
+                              <th className="py-2 pr-4">手机号</th>
+                              <th className="py-2 pr-4">角色</th>
+                              <th className="py-2 pr-4">创建时间</th>
+                              <th className="py-2 pr-4 text-right">操作</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {accountData.map((account) => (
+                              <tr key={account.id} className="border-t border-border">
+                                <td className="py-2 pr-4 font-medium">
+                                  {account.displayName ?? account.phone ?? account.id}
+                                </td>
+                                <td className="py-2 pr-4">{account.phone ?? '-'}</td>
+                                <td className="py-2 pr-4 capitalize">{account.role}</td>
+                                <td className="py-2 pr-4">
+                                  {new Date(account.createdAt).toLocaleString()}
+                                </td>
+                                <td className="py-2 pr-4 text-right">
+                                  <RoleSelect
+                                    value={account.role}
+                                    disabled={updateRoleMutation.isPending}
+                                    onChange={(role) =>
+                                      updateRoleMutation.mutate({ userId: account.id, role })
+                                    }
+                                  />
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
             )}
-          </CardContent>
-        </Card>
+          </Tabs>
+        )}
       </section>
 
-      {user && (
-        <section className="container pb-16">
-          <CompetitionWizard
-            onCreated={() => {
-              competitionsQuery.refetch();
-            }}
-          />
+      {(message || error) && user && (
+        <section className="container pb-8">
+          <Card className="bg-muted/40">
+            <CardContent className="py-3 text-sm">
+              {message && (
+                <span className="text-green-600 dark:text-green-500">{message}</span>
+              )}
+              {error && <span className="text-destructive">{error}</span>}
+            </CardContent>
+          </Card>
         </section>
       )}
     </main>
   );
+}
+
+function RoleSelect({
+  value,
+  onChange,
+  disabled
+}: {
+  value: string;
+  onChange: (role: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <select
+      className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+      value={value}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+    >
+      <option value="admin">系统管理员</option>
+      <option value="organizer">办赛方</option>
+      <option value="team">参赛队伍</option>
+    </select>
+  );
+}
+
+function formatRange(start?: string, end?: string) {
+  if (!start && !end) return '-';
+  const startText = start ? new Date(start).toLocaleString() : '待定';
+  const endText = end ? new Date(end).toLocaleString() : '待定';
+  return `${startText} ~ ${endText}`;
 }

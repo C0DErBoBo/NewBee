@@ -13,6 +13,8 @@ import {
 } from '../services/tokenService';
 import { authGuard, AuthenticatedRequest } from '../middleware/authGuard';
 
+const SYSTEM_ADMIN_PHONE = '15521396332';
+
 const requestCodeSchema = z.object({
   phone: z
     .string()
@@ -43,7 +45,9 @@ authRouter.post('/code', async (req, res, next) => {
 
     if (env.NODE_ENV !== 'production') {
       // eslint-disable-next-line no-console
-      console.log(`[调试] 向 ${phone} 下发验证码 ${code}（${expiresAt.toISOString()} 过期）`);
+      console.log(
+        `[调试] 向 ${phone} 下发验证码 ${code}（${expiresAt.toISOString()} 过期）`
+      );
     }
 
     res.json({
@@ -54,6 +58,36 @@ authRouter.post('/code', async (req, res, next) => {
     next(error);
   }
 });
+
+async function ensureSystemAdmin(userId: string, phone: string) {
+  if (phone !== SYSTEM_ADMIN_PHONE) {
+    return;
+  }
+  await pool.query(
+    `
+      UPDATE users
+      SET role = 'admin'
+      WHERE id = $1 AND role <> 'admin'
+    `,
+    [userId]
+  );
+}
+
+async function fetchUserById(userId: string) {
+  const { rows } = await pool.query(
+    `
+      SELECT id, phone, display_name, role
+      FROM users
+      WHERE id = $1
+    `,
+    [userId]
+  );
+  const user = rows[0];
+  if (!user) {
+    throw new Error('用户不存在');
+  }
+  return user;
+}
 
 authRouter.post('/login/phone', async (req, res, next) => {
   try {
@@ -72,12 +106,14 @@ authRouter.post('/login/phone', async (req, res, next) => {
         VALUES ($1, $2)
         ON CONFLICT (phone)
         DO UPDATE SET display_name = COALESCE(users.display_name, EXCLUDED.display_name)
-        RETURNING id, phone, display_name, role
+        RETURNING id, phone
       `,
       [phone, displayName]
     );
 
-    const user = result.rows[0];
+    const baseUser = result.rows[0];
+    await ensureSystemAdmin(baseUser.id, baseUser.phone);
+    const user = await fetchUserById(baseUser.id);
 
     const tokens = await generateTokens({
       sub: user.id,
@@ -104,12 +140,12 @@ authRouter.post('/login/wechat', async (req, res, next) => {
         VALUES ($1, $2, $3)
         ON CONFLICT (wechat_openid)
         DO UPDATE SET display_name = COALESCE(users.display_name, EXCLUDED.display_name)
-        RETURNING id, phone, display_name, role
+        RETURNING id, role
       `,
       [mockOpenId, `微信用户${mockOpenId.slice(-4)}`, 'organizer']
     );
 
-    const user = result.rows[0];
+    const user = await fetchUserById(result.rows[0].id);
 
     const tokens = await generateTokens({
       sub: user.id,

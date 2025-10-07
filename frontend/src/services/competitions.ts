@@ -27,12 +27,29 @@ export interface CompetitionRuleInput {
 export interface CreateCompetitionPayload {
   name: string;
   location?: string;
+  signupStartAt: string;
+  signupEndAt: string;
   startAt?: string;
   endAt?: string;
   config?: Record<string, unknown>;
   events?: CompetitionEventInput[];
   groups?: CompetitionGroupInput[];
   rules?: CompetitionRuleInput;
+}
+
+export interface CompetitionSummary {
+  id: string;
+  name: string;
+  location?: string;
+  signupStartAt?: string;
+  signupEndAt?: string;
+  startAt?: string;
+  endAt?: string;
+  createdAt: string;
+  stats: {
+    participantCount: number;
+    teamCount: number;
+  };
 }
 
 export async function fetchEventTemplates() {
@@ -49,12 +66,5 @@ export async function createCompetition(payload: CreateCompetitionPayload) {
 
 export async function fetchCompetitions() {
   const { data } = await apiClient.get('/competitions');
-  return data.competitions as Array<{
-    id: string;
-    name: string;
-    location?: string;
-    startAt?: string;
-    endAt?: string;
-    createdAt: string;
-  }>;
+  return data.competitions as CompetitionSummary[];
 }
