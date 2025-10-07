@@ -1,0 +1,42 @@
+name: Deploy to CloudBase
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDBASE_SECRET_ID: ${{ secrets.CLOUDBASE_SECRET_ID }}
+      CLOUDBASE_SECRET_KEY: ${{ secrets.CLOUDBASE_SECRET_KEY }}
+      CLOUDBASE_TOKEN: ${{ secrets.CLOUDBASE_TOKEN }}
+      CLOUDBASE_DEPLOY_CONFIG: ${{ secrets.CLOUDBASE_DEPLOY_CONFIG }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 8
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Verify CloudBase CLI
+        run: |
+          npm install -g @cloudbase/cli
+          cloudbase -V
+
+      - name: Run deploy script
+        run: pnpm deploy:cloudbase

@@ -1,0 +1,18 @@
+{
+  "cloudbaseEnvId": "your-env-id",
+  "cloudbaseRegion": "ap-shanghai",
+  "projectPath": ".",
+  "buildCommand": "",
+  "deployCommand": "framework:deploy",
+  "deployArgs": [],
+  "outputDirectory": "dist",
+  "rollback": {
+    "enabled": true,
+    "command": "framework:deploy",
+    "arguments": [
+      "--rollback"
+    ]
+  },
+  "preDeployCommands": [],
+  "postDeployCommands": []
+}
