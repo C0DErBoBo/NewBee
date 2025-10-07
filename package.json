@@ -1,9 +1,17 @@
 {
-  "name": "competition-system-deploy",
+  "name": "competition-system-monorepo",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
   "scripts": {
-    "deploy:cloudbase": "node scripts/deploy-cloudbase.cjs"
+    "deploy:cloudbase": "node scripts/deploy-cloudbase.cjs",
+    "dev:frontend": "pnpm --filter frontend dev",
+    "dev:backend": "pnpm --filter backend dev",
+    "build:frontend": "pnpm --filter frontend build",
+    "build:backend": "pnpm --filter backend build"
   },
   "engines": {
     "node": ">=18.0.0",
