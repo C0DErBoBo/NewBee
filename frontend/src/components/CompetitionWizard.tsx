@@ -12,17 +12,21 @@ import {
 } from './ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import {
+  CompetitionDetail,
   CompetitionEventInput,
   CompetitionGroupInput,
   CompetitionRuleInput,
-  CompetitionSummary,
   createCompetition,
-  fetchCompetitions,
-  fetchEventTemplates
+  fetchEventTemplates,
+  updateCompetition
 } from '@/services/competitions';
 
 interface WizardProps {
+  mode?: 'create' | 'edit';
+  initialCompetition?: CompetitionDetail;
   onCreated?: (competitionId: string) => void;
+  onUpdated?: (competitionId: string) => void;
+  onClose?: () => void;
 }
 
 type StepKey = 'basic' | 'events' | 'groups' | 'rules' | 'confirm';
@@ -49,7 +53,7 @@ const defaultRules: CompetitionRuleInput = {
   }
 };
 
-const DEFAULT_GROUPS: CompetitionGroupInput[] = [
+const defaultGroups: CompetitionGroupInput[] = [
   { name: '男子组', gender: 'male', ageBracket: '18-25', identityType: '学生' },
   { name: '女子组', gender: 'female', ageBracket: '18-25', identityType: '学生' }
 ];
@@ -59,94 +63,141 @@ const DATE_INPUT_FORMAT = 'datetime-local';
 const toIsoString = (value: string) =>
   value ? new Date(value).toISOString() : undefined;
 
-const currentIso = () => new Date().toISOString().slice(0, 16);
+const toInputDateTime = (value?: string) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 16);
+};
 
-export function CompetitionWizard({ onCreated }: WizardProps) {
+const nowInputValue = () => toInputDateTime(new Date().toISOString());
+
+export function CompetitionWizard({
+  mode = 'create',
+  initialCompetition,
+  onCreated,
+  onUpdated,
+  onClose
+}: WizardProps) {
   const [currentStep, setCurrentStep] = useState<StepKey>('basic');
   const [name, setName] = useState('校运会');
   const [location, setLocation] = useState('田径场');
-  const [signupStartAt, setSignupStartAt] = useState(currentIso());
-  const [signupEndAt, setSignupEndAt] = useState(currentIso());
+  const [signupStartAt, setSignupStartAt] = useState(nowInputValue());
+  const [signupEndAt, setSignupEndAt] = useState(nowInputValue());
   const [eventStartAt, setEventStartAt] = useState('');
   const [eventEndAt, setEventEndAt] = useState('');
-  const [selectedEvents, setSelectedEvents] = useState<CompetitionEventInput[]>([]);
+  const [events, setEvents] = useState<CompetitionEventInput[]>([]);
   const [customEvent, setCustomEvent] = useState<{
     name: string;
     category: CompetitionEventInput['category'];
     unitType: CompetitionEventInput['unitType'];
   }>({ name: '', category: 'track', unitType: 'individual' });
-  const [groups, setGroups] = useState<CompetitionGroupInput[]>(DEFAULT_GROUPS);
+  const [groups, setGroups] = useState<CompetitionGroupInput[]>(defaultGroups);
   const [rules, setRules] = useState<CompetitionRuleInput>(defaultRules);
   const [submissionMessage, setSubmissionMessage] = useState<string | null>(null);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
-  const [competitionList, setCompetitionList] = useState<CompetitionSummary[]>([]);
 
   const templatesQuery = useQuery({
     queryKey: ['event-templates'],
     queryFn: fetchEventTemplates
   });
 
-  const listQuery = useQuery({
-    queryKey: ['competitions'],
-    queryFn: fetchCompetitions,
-    onSuccess: setCompetitionList
-  });
+  useEffect(() => {
+    if (mode === 'edit' && initialCompetition) {
+      setName(initialCompetition.name);
+      setLocation(initialCompetition.location ?? '');
+      setSignupStartAt(toInputDateTime(initialCompetition.signupStartAt));
+      setSignupEndAt(toInputDateTime(initialCompetition.signupEndAt));
+      setEventStartAt(toInputDateTime(initialCompetition.startAt));
+      setEventEndAt(toInputDateTime(initialCompetition.endAt));
+      setEvents(
+        initialCompetition.events.map((event) => ({
+          name: event.name,
+          category: event.category,
+          unitType: event.unitType,
+          isCustom: event.isCustom,
+          config: event.config
+        }))
+      );
+      setGroups(
+        initialCompetition.groups.length > 0
+          ? initialCompetition.groups.map((group) => ({
+              name: group.name,
+              gender: group.gender,
+              ageBracket: group.ageBracket,
+              identityType: group.identityType,
+              maxParticipants: group.maxParticipants,
+              teamSize: group.teamSize,
+              config: group.config
+            }))
+          : defaultGroups
+      );
+      setRules(initialCompetition.rules ?? defaultRules);
+    } else if (events.length === 0 && templatesQuery.data?.length) {
+      setEvents(templatesQuery.data.slice(0, 5));
+    }
+  }, [mode, initialCompetition, templatesQuery.data]);
 
-  const createMutation = useMutation({
-    mutationFn: createCompetition,
-    onSuccess: (competition) => {
-      setSubmissionMessage('赛事创建成功');
-      setSubmissionError(null);
-      listQuery.refetch();
-      if (onCreated) {
-        onCreated(competition.id);
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const payload = buildPayload({
+        name,
+        location,
+        signupStartAt,
+        signupEndAt,
+        eventStartAt,
+        eventEndAt,
+        events,
+        groups,
+        rules
+      });
+
+      if (mode === 'edit' && initialCompetition) {
+        return updateCompetition(initialCompetition.id, payload);
       }
+      return createCompetition(payload);
+    },
+    onSuccess: (competition) => {
+      if (mode === 'edit' && initialCompetition) {
+        setSubmissionMessage('赛事更新成功');
+        onUpdated?.(competition.id);
+      } else {
+        setSubmissionMessage('赛事创建成功');
+        onCreated?.(competition.id);
+      }
+      setSubmissionError(null);
     },
     onError: (error: unknown) => {
       setSubmissionError(
-        error instanceof Error ? error.message : '创建赛事失败，请稍后重试'
+        error instanceof Error
+          ? error.message
+          : mode === 'edit'
+            ? '更新赛事失败，请稍后重试'
+            : '创建赛事失败，请稍后重试'
       );
     }
   });
 
-  useEffect(() => {
-    if (templatesQuery.data?.length && selectedEvents.length === 0) {
-      setSelectedEvents(templatesQuery.data.slice(0, 5));
-    }
-  }, [templatesQuery.data, selectedEvents.length]);
-
-  const competitionPayload = useMemo(() => ({
-    name,
-    location,
-    signupStartAt: toIsoString(signupStartAt)!,
-    signupEndAt: toIsoString(signupEndAt)!,
-    startAt: toIsoString(eventStartAt),
-    endAt: toIsoString(eventEndAt),
-    events: selectedEvents,
-    groups,
-    rules
-  }), [name, location, signupStartAt, signupEndAt, eventStartAt, eventEndAt, selectedEvents, groups, rules]);
-
   const canProceed = useMemo(() => {
     switch (currentStep) {
       case 'basic':
-        return (
-          name.trim().length > 0 &&
-          signupStartAt.trim().length > 0 &&
-          signupEndAt.trim().length > 0
+        return Boolean(
+          name.trim() && signupStartAt.trim() && signupEndAt.trim()
         );
       case 'events':
-        return selectedEvents.length > 0;
+        return events.length > 0;
       case 'groups':
         return groups.length > 0;
       default:
         return true;
     }
-  }, [currentStep, name, signupStartAt, signupEndAt, selectedEvents.length, groups.length]);
+  }, [currentStep, name, signupStartAt, signupEndAt, events.length, groups.length]);
 
   const handleAddCustomEvent = () => {
     if (!customEvent.name.trim()) return;
-    setSelectedEvents((prev) => [
+    setEvents((prev) => [
       ...prev,
       {
         name: customEvent.name.trim(),
@@ -158,17 +209,6 @@ export function CompetitionWizard({ onCreated }: WizardProps) {
     setCustomEvent({ name: '', category: 'track', unitType: 'individual' });
   };
 
-  const handleAddGroup = () => {
-    setGroups((prev) => [
-      ...prev,
-      {
-        name: `新增组别${prev.length + 1}`,
-        gender: 'mixed',
-        identityType: '不限'
-      }
-    ]);
-  };
-
   const handleRemoveGroup = (index: number) => {
     setGroups((prev) => prev.filter((_, idx) => idx !== index));
   };
@@ -176,13 +216,13 @@ export function CompetitionWizard({ onCreated }: WizardProps) {
   const handleSubmit = async () => {
     setSubmissionMessage(null);
     setSubmissionError(null);
-    await createMutation.mutateAsync(competitionPayload);
+    await mutation.mutateAsync();
   };
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>赛事配置向导</CardTitle>
+        <CardTitle>{mode === 'edit' ? '编辑赛事' : '新增赛事'}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
         <Tabs value={currentStep} onValueChange={(value) => setCurrentStep(value as StepKey)}>
@@ -263,7 +303,7 @@ export function CompetitionWizard({ onCreated }: WizardProps) {
             </p>
             <div className="grid gap-2 md:grid-cols-2">
               {templatesQuery.data?.map((event) => {
-                const checked = selectedEvents.some((item) => item.name === event.name);
+                const checked = events.some((item) => item.name === event.name);
                 return (
                   <label
                     key={event.name}
@@ -279,11 +319,9 @@ export function CompetitionWizard({ onCreated }: WizardProps) {
                       checked={checked}
                       onChange={(e) => {
                         if (e.target.checked) {
-                          setSelectedEvents((prev) => [...prev, event]);
+                          setEvents((prev) => [...prev, event]);
                         } else {
-                          setSelectedEvents((prev) =>
-                            prev.filter((item) => item.name !== event.name)
-                          );
+                          setEvents((prev) => prev.filter((item) => item.name !== event.name));
                         }
                       }}
                     />
@@ -340,7 +378,7 @@ export function CompetitionWizard({ onCreated }: WizardProps) {
             </p>
             <div className="space-y-3">
               {groups.map((group, index) => (
-                <div key={index} className="rounded-md border border-border p-4 space-y-3">
+                <div key={index} className="space-y-3 rounded-md border border-border p-4">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium">{group.name}</span>
                     <Button variant="ghost" type="button" onClick={() => handleRemoveGroup(index)}>
@@ -447,7 +485,20 @@ export function CompetitionWizard({ onCreated }: WizardProps) {
                   </div>
                 </div>
               ))}
-              <Button type="button" variant="secondary" onClick={handleAddGroup}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() =>
+                  setGroups((prev) => [
+                    ...prev,
+                    {
+                      name: `新增组别${prev.length + 1}`,
+                      gender: 'mixed',
+                      identityType: '不限'
+                    }
+                  ])
+                }
+              >
                 新增组别
               </Button>
             </div>
@@ -500,10 +551,24 @@ export function CompetitionWizard({ onCreated }: WizardProps) {
 
           <TabsContent value="confirm" className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              确认以下配置后点击提交。提交后仍可进入赛事管理进行修改。
+              确认以下配置后点击提交。提交后仍可在赛事管理中继续调整。
             </p>
             <pre className="max-h-64 overflow-auto rounded-md bg-muted p-4 text-xs">
-              {JSON.stringify(competitionPayload, null, 2)}
+              {JSON.stringify(
+                buildPayload({
+                  name,
+                  location,
+                  signupStartAt,
+                  signupEndAt,
+                  eventStartAt,
+                  eventEndAt,
+                  events,
+                  groups,
+                  rules
+                }),
+                null,
+                2
+              )}
             </pre>
           </TabsContent>
         </Tabs>
@@ -537,9 +602,20 @@ export function CompetitionWizard({ onCreated }: WizardProps) {
               下一步
             </Button>
           ) : (
-            <Button type="button" onClick={handleSubmit} disabled={createMutation.isPending}>
-              {createMutation.isPending ? '提交中...' : '提交赛事配置'}
-            </Button>
+            <div className="space-x-2">
+              <Button type="button" variant="outline" onClick={onClose} disabled={mutation.isLoading}>
+                取消
+              </Button>
+              <Button type="button" onClick={handleSubmit} disabled={mutation.isLoading}>
+                {mutation.isLoading
+                  ? mode === 'edit'
+                    ? '保存中...'
+                    : '提交中...'
+                  : mode === 'edit'
+                    ? '保存修改'
+                    : '提交赛事配置'}
+              </Button>
+            </div>
           )}
         </div>
         <div className="flex-1 text-right text-sm">
@@ -549,40 +625,6 @@ export function CompetitionWizard({ onCreated }: WizardProps) {
           {submissionError && <span className="text-destructive">{submissionError}</span>}
         </div>
       </CardFooter>
-
-      {competitionList.length > 0 && (
-        <CardFooter className="flex-col items-start gap-3 border-t border-border bg-muted/30 p-6">
-          <h3 className="text-sm font-semibold">近期创建赛事</h3>
-          <div className="w-full overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="text-left text-muted-foreground">
-                <tr>
-                  <th className="py-2 pr-4">名称</th>
-                  <th className="py-2 pr-4">报名时间</th>
-                  <th className="py-2 pr-4">比赛时间</th>
-                  <th className="py-2 pr-4">地点</th>
-                  <th className="py-2 pr-4 text-right">报名人数 / 团队</th>
-                </tr>
-              </thead>
-              <tbody>
-                {competitionList.map((item) => (
-                  <tr key={item.id} className="border-t border-border">
-                    <td className="py-2 pr-4 font-medium">{item.name}</td>
-                    <td className="py-2 pr-4">
-                      {formatRange(item.signupStartAt, item.signupEndAt)}
-                    </td>
-                    <td className="py-2 pr-4">{formatRange(item.startAt, item.endAt)}</td>
-                    <td className="py-2 pr-4">{item.location ?? '-'}</td>
-                    <td className="py-2 pr-4 text-right">
-                      {item.stats.participantCount} / {item.stats.teamCount}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardFooter>
-      )}
     </Card>
   );
 }
@@ -596,9 +638,36 @@ function safeJsonParse<T>(value: string, fallback: T | undefined): T | undefined
   }
 }
 
-function formatRange(start?: string, end?: string) {
-  if (!start && !end) return '-';
-  const startText = start ? new Date(start).toLocaleString() : '待定';
-  const endText = end ? new Date(end).toLocaleString() : '待定';
-  return `${startText} ~ ${endText}`;
+function buildPayload({
+  name,
+  location,
+  signupStartAt,
+  signupEndAt,
+  eventStartAt,
+  eventEndAt,
+  events,
+  groups,
+  rules
+}: {
+  name: string;
+  location: string;
+  signupStartAt: string;
+  signupEndAt: string;
+  eventStartAt: string;
+  eventEndAt: string;
+  events: CompetitionEventInput[];
+  groups: CompetitionGroupInput[];
+  rules: CompetitionRuleInput;
+}) {
+  return {
+    name,
+    location,
+    signupStartAt: toIsoString(signupStartAt)!,
+    signupEndAt: toIsoString(signupEndAt)!,
+    startAt: toIsoString(eventStartAt),
+    endAt: toIsoString(eventEndAt),
+    events,
+    groups,
+    rules
+  };
 }

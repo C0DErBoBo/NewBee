@@ -52,6 +52,26 @@ export interface CompetitionSummary {
   };
 }
 
+export interface CompetitionEventDetail extends CompetitionEventInput {
+  id?: string;
+}
+
+export interface CompetitionGroupDetail extends CompetitionGroupInput {
+  id?: string;
+}
+
+export interface CompetitionRuleDetail extends CompetitionRuleInput {
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CompetitionDetail extends CompetitionSummary {
+  config?: Record<string, unknown>;
+  events: CompetitionEventDetail[];
+  groups: CompetitionGroupDetail[];
+  rules: CompetitionRuleDetail | null;
+}
+
 export async function fetchEventTemplates() {
   const { data } = await apiClient.get<{ events: CompetitionEventInput[] }>(
     '/competitions/templates/events'
@@ -67,4 +87,19 @@ export async function createCompetition(payload: CreateCompetitionPayload) {
 export async function fetchCompetitions() {
   const { data } = await apiClient.get('/competitions');
   return data.competitions as CompetitionSummary[];
+}
+
+export async function fetchCompetitionDetail(id: string) {
+  const { data } = await apiClient.get<{ competition: CompetitionDetail }>(
+    `/competitions/${id}`
+  );
+  return data.competition;
+}
+
+export async function updateCompetition(id: string, payload: CreateCompetitionPayload) {
+  const { data } = await apiClient.patch<{ competition: CompetitionDetail }>(
+    `/competitions/${id}`,
+    payload
+  );
+  return data.competition;
 }

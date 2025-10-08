@@ -7,7 +7,6 @@ import * as competitionService from '@/services/competitions';
 vi.spyOn(competitionService, 'fetchEventTemplates').mockResolvedValue([
   { name: '100m', category: 'track', unitType: 'individual' }
 ]);
-vi.spyOn(competitionService, 'fetchCompetitions').mockResolvedValue([]);
 vi.spyOn(competitionService, 'createCompetition').mockResolvedValue({
   id: 'comp-1'
 });
@@ -22,7 +21,7 @@ function renderWizard() {
 }
 
 describe('CompetitionWizard', () => {
-  it('allows switching steps and validates progression', async () => {
+  it('支持步骤切换并校验进度', async () => {
     renderWizard();
     const nextButton = screen.getByRole('button', { name: '下一步' });
     expect(nextButton).toBeEnabled();

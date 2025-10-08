@@ -16,17 +16,38 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 import {
   fetchCompetitions,
-  CompetitionSummary
+  fetchCompetitionDetail,
+  CompetitionSummary,
+  CompetitionDetail
 } from './services/competitions';
 import {
   loginWithPhone,
   loginWithWechat,
   requestPhoneCode
 } from './services/auth';
-import { CompetitionWizard } from './components/CompetitionWizard';
 import { fetchAccounts, updateAccountRole, AccountSummary } from './services/admin';
+import { CompetitionWizard } from './components/CompetitionWizard';
 
 type MainTab = 'competition' | 'account' | 'admin';
+
+interface ToastState {
+  text: string;
+  variant: 'success' | 'info';
+}
+
+interface WizardState {
+  visible: boolean;
+  mode: 'create' | 'edit';
+  loading: boolean;
+  competition?: CompetitionDetail;
+}
+
+const initialWizardState: WizardState = {
+  visible: false,
+  mode: 'create',
+  loading: false,
+  competition: undefined
+};
 
 export default function App() {
   const dispatch = useAppDispatch();
@@ -37,9 +58,10 @@ export default function App() {
   const [code, setCode] = useState('');
   const [wechatCode, setWechatCode] = useState('');
   const [countdown, setCountdown] = useState(0);
-  const [message, setMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<MainTab>('competition');
+  const [wizardState, setWizardState] = useState<WizardState>(initialWizardState);
 
   const competitionsQuery = useQuery({
     queryKey: ['dashboard-competitions'],
@@ -56,7 +78,7 @@ export default function App() {
   const requestCodeMutation = useMutation({
     mutationFn: (phoneNumber: string) => requestPhoneCode(phoneNumber),
     onSuccess: () => {
-      setMessage('验证码已发送（开发环境支持使用指定测试码）');
+      setToast({ text: '验证码已发送（开发环境可使用固定测试码）', variant: 'info' });
       setError(null);
       setCountdown(60);
     },
@@ -69,7 +91,7 @@ export default function App() {
     mutationFn: loginWithPhone,
     onSuccess: (data) => {
       dispatch(loginSuccess(data));
-      setMessage('登录成功');
+      setToast({ text: '登录成功', variant: 'success' });
       setError(null);
       setActiveTab('competition');
       competitionsQuery.refetch();
@@ -86,7 +108,7 @@ export default function App() {
     mutationFn: loginWithWechat,
     onSuccess: (data) => {
       dispatch(loginSuccess(data));
-      setMessage('微信登录成功（使用模拟 openId）');
+      setToast({ text: '微信登录成功（已使用模拟 openId）', variant: 'success' });
       setError(null);
       setActiveTab('competition');
       competitionsQuery.refetch();
@@ -117,7 +139,7 @@ export default function App() {
 
   useEffect(() => {
     if (!user) {
-      setMessage(null);
+      setToast(null);
       setError(null);
       setCountdown(0);
       setPhone('');
@@ -126,10 +148,18 @@ export default function App() {
     }
   }, [user]);
 
-  const canSendCode = useMemo(() => /^1\d{10}$/.test(phone) && countdown === 0, [
-    phone,
-    countdown
-  ]);
+  useEffect(() => {
+    if (!toast) return;
+    const timeout = window.setTimeout(() => {
+      setToast(null);
+    }, toast.variant === 'success' ? 2500 : 4000);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
+
+  const canSendCode = useMemo(
+    () => /^1\d{10}$/.test(phone) && countdown === 0,
+    [phone, countdown]
+  );
 
   const handleSendCode = async () => {
     if (!canSendCode) return;
@@ -150,11 +180,63 @@ export default function App() {
 
   const handleLogout = () => {
     dispatch(logout());
-    setMessage('已退出登录');
+    setToast({ text: '已退出登录', variant: 'info' });
   };
+
+  const openCreateWizard = () => {
+    setWizardState({ visible: true, mode: 'create', loading: false, competition: undefined });
+  };
+
+  const openEditWizard = async (competitionId: string) => {
+    setWizardState({ visible: true, mode: 'edit', loading: true, competition: undefined });
+    try {
+      const detail = await fetchCompetitionDetail(competitionId);
+      setWizardState({ visible: true, mode: 'edit', loading: false, competition: detail });
+    } catch (err) {
+      setWizardState(initialWizardState);
+      setError(err instanceof Error ? err.message : '获取赛事详情失败');
+    }
+  };
+
+  const closeWizard = () => setWizardState(initialWizardState);
 
   const competitionData = competitionsQuery.data ?? [];
   const accountData = accountsQuery.data ?? [];
+
+  const renderCompetitionTable = (list: CompetitionSummary[]) => (
+    <div className="overflow-x-auto">
+      <table className="min-w-full text-sm">
+        <thead className="text-left text-muted-foreground">
+          <tr>
+            <th className="py-2 pr-4">名称</th>
+            <th className="py-2 pr-4">报名时间</th>
+            <th className="py-2 pr-4">比赛时间</th>
+            <th className="py-2 pr-4">地点</th>
+            <th className="py-2 pr-4 text-right">报名人数 / 团队</th>
+            <th className="py-2 pl-4 text-right">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {list.map((item) => (
+            <tr key={item.id} className="border-t border-border">
+              <td className="py-2 pr-4 font-medium">{item.name}</td>
+              <td className="py-2 pr-4">{formatRange(item.signupStartAt, item.signupEndAt)}</td>
+              <td className="py-2 pr-4">{formatRange(item.startAt, item.endAt)}</td>
+              <td className="py-2 pr-4">{item.location ?? '-'}</td>
+              <td className="py-2 pr-4 text-right">
+                {item.stats.participantCount} / {item.stats.teamCount}
+              </td>
+              <td className="py-2 pl-4 text-right">
+                <Button variant="ghost" size="sm" onClick={() => openEditWizard(item.id)}>
+                  管理
+                </Button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -227,7 +309,7 @@ export default function App() {
                       {phoneLoginMutation.isPending ? '登录中...' : '立即登录'}
                     </Button>
                     <p className="text-xs text-muted-foreground">
-                      开发模式可直接输入测试验证码 <code>zxcasd</code>。
+                      开发模式下可直接使用测试验证码 <code>zxcasd</code>。
                     </p>
                   </form>
                 </TabsContent>
@@ -250,14 +332,6 @@ export default function App() {
                 </TabsContent>
               </Tabs>
             </CardContent>
-            {(message || error) && (
-              <CardFooter className="flex-col items-start gap-2">
-                {message && (
-                  <p className="text-sm text-green-600 dark:text-green-500">{message}</p>
-                )}
-                {error && <p className="text-sm text-destructive">{error}</p>}
-              </CardFooter>
-            )}
           </Card>
         ) : (
           <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as MainTab)}>
@@ -268,18 +342,59 @@ export default function App() {
             </TabsList>
 
             <TabsContent value="competition" className="space-y-6">
-              <CompetitionWizard
-                onCreated={() => {
-                  competitionsQuery.refetch();
-                }}
-              />
+              <Card>
+                <CardHeader>
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <CardTitle>赛事列表</CardTitle>
+                      <CardDescription>点击“管理”可进入赛事详情页修改设置。</CardDescription>
+                    </div>
+                    <Button onClick={openCreateWizard}>新增赛事</Button>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {competitionsQuery.isLoading ? (
+                    <p className="text-sm text-muted-foreground">加载中...</p>
+                  ) : competitionData.length ? (
+                    renderCompetitionTable(competitionData)
+                  ) : (
+                    <p className="text-sm text-muted-foreground">暂无赛事记录，点击“新增赛事”开始配置。</p>
+                  )}
+                </CardContent>
+              </Card>
+
+              {wizardState.visible && (
+                wizardState.loading ? (
+                  <Card>
+                    <CardContent className="py-8 text-center text-sm text-muted-foreground">
+                      正在加载赛事详情...
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <CompetitionWizard
+                    mode={wizardState.mode}
+                    initialCompetition={wizardState.competition}
+                    onClose={closeWizard}
+                    onCreated={(id) => {
+                      setToast({ text: '赛事创建成功', variant: 'success' });
+                      closeWizard();
+                      competitionsQuery.refetch();
+                    }}
+                    onUpdated={(id) => {
+                      setToast({ text: '赛事更新成功', variant: 'success' });
+                      closeWizard();
+                      competitionsQuery.refetch();
+                    }}
+                  />
+                )
+              )}
             </TabsContent>
 
             <TabsContent value="account" className="space-y-6">
               <Card>
                 <CardHeader>
                   <CardTitle>账号信息</CardTitle>
-                  <CardDescription>查看当前登录账号与赛事概况。</CardDescription>
+                  <CardDescription>查看当前登录账号及近期登录提示。</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div>
@@ -294,7 +409,7 @@ export default function App() {
                   </div>
                   <div className="rounded-md border border-border p-4">
                     <div className="mb-3 flex items-center justify-between">
-                      <h3 className="text-sm font-semibold">赛事列表</h3>
+                      <h3 className="text-sm font-semibold">赛事概览</h3>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -307,36 +422,7 @@ export default function App() {
                     {competitionsQuery.isLoading ? (
                       <p className="text-sm text-muted-foreground">加载中...</p>
                     ) : competitionData.length ? (
-                      <div className="overflow-x-auto">
-                        <table className="min-w-full text-sm">
-                          <thead className="text-left text-muted-foreground">
-                            <tr>
-                              <th className="py-2 pr-4">名称</th>
-                              <th className="py-2 pr-4">报名时间</th>
-                              <th className="py-2 pr-4">比赛时间</th>
-                              <th className="py-2 pr-4">地点</th>
-                              <th className="py-2 pr-4 text-right">报名人数 / 团队</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {competitionData.map((item) => (
-                              <tr key={item.id} className="border-t border-border">
-                                <td className="py-2 pr-4 font-medium">{item.name}</td>
-                                <td className="py-2 pr-4">
-                                  {formatRange(item.signupStartAt, item.signupEndAt)}
-                                </td>
-                                <td className="py-2 pr-4">
-                                  {formatRange(item.startAt, item.endAt)}
-                                </td>
-                                <td className="py-2 pr-4">{item.location ?? '-'}</td>
-                                <td className="py-2 pr-4 text-right">
-                                  {item.stats.participantCount} / {item.stats.teamCount}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                      renderCompetitionTable(competitionData)
                     ) : (
                       <p className="text-sm text-muted-foreground">暂无赛事记录。</p>
                     )}
@@ -379,7 +465,7 @@ export default function App() {
                               <th className="py-2 pr-4">手机号</th>
                               <th className="py-2 pr-4">角色</th>
                               <th className="py-2 pr-4">创建时间</th>
-                              <th className="py-2 pr-4 text-right">操作</th>
+                              <th className="py-2 pl-4 text-right">操作</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -393,7 +479,7 @@ export default function App() {
                                 <td className="py-2 pr-4">
                                   {new Date(account.createdAt).toLocaleString()}
                                 </td>
-                                <td className="py-2 pr-4 text-right">
+                                <td className="py-2 pl-4 text-right">
                                   <RoleSelect
                                     value={account.role}
                                     disabled={updateRoleMutation.isPending}
@@ -416,14 +502,16 @@ export default function App() {
         )}
       </section>
 
-      {(message || error) && user && (
+      {(toast || error) && (
         <section className="container pb-8">
           <Card className="bg-muted/40">
             <CardContent className="py-3 text-sm">
-              {message && (
-                <span className="text-green-600 dark:text-green-500">{message}</span>
+              {toast && (
+                <span className={toast.variant === 'success' ? 'text-green-600 dark:text-green-500' : 'text-muted-foreground'}>
+                  {toast.text}
+                </span>
               )}
-              {error && <span className="text-destructive">{error}</span>}
+              {error && <span className="ml-4 text-destructive">{error}</span>}
             </CardContent>
           </Card>
         </section>

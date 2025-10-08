@@ -7,14 +7,18 @@ const mockFetchEventTemplates = vi.fn().mockResolvedValue([
   { name: '100m', category: 'track', unitType: 'individual' }
 ]);
 const mockFetchCompetitions = vi.fn().mockResolvedValue([]);
+const mockFetchCompetitionDetail = vi.fn();
 const mockCreateCompetition = vi.fn().mockResolvedValue({ id: 'comp-1' });
+const mockUpdateCompetition = vi.fn();
 const mockFetchAccounts = vi.fn().mockResolvedValue([]);
 const mockUpdateAccountRole = vi.fn();
 
 vi.mock('@/services/competitions', () => ({
   fetchEventTemplates: mockFetchEventTemplates,
   fetchCompetitions: mockFetchCompetitions,
-  createCompetition: mockCreateCompetition
+  fetchCompetitionDetail: mockFetchCompetitionDetail,
+  createCompetition: mockCreateCompetition,
+  updateCompetition: mockUpdateCompetition
 }));
 
 vi.mock('@/services/admin', () => ({
@@ -30,7 +34,7 @@ function renderWithProviders() {
   );
 }
 
-describe('App 登录流程', () => {
+describe('App 登录视图', () => {
   it('默认展示手机号登录表单', () => {
     renderWithProviders();
     expect(screen.getByRole('heading', { name: '快捷登录' })).toBeInTheDocument();
