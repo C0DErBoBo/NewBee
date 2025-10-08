@@ -101,16 +101,8 @@ async function syncCompetitionRegistrations(options) {
           UPDATE competition_registrations
           SET participant_gender = $1,
               participant_identity = $2,
-              extra = jsonb_set(
-                jsonb_set(
-                  COALESCE(extra, '{}'::jsonb),
-                  '{group}',
-                  COALESCE(to_jsonb($2::text), 'null'::jsonb),
-                  true
-                ),
-                '{gender}',
-                COALESCE(to_jsonb($1::text), 'null'::jsonb),
-                true
+              extra = jsonb_strip_nulls(
+                COALESCE(extra, '{}'::jsonb) || jsonb_build_object('group', $2, 'gender', $1)
               ),
               updated_at = NOW()
           WHERE id = $3
