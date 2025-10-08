@@ -3,7 +3,6 @@ import { Loader2 } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
-import { Input } from './ui/input';
 import {
   RegistrationListResponse,
   RegistrationStatus,
@@ -52,6 +51,20 @@ function statusTone(status: RegistrationStatus) {
     default:
       return 'text-amber-600 dark:text-amber-500';
   }
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
+function formatSelections(selections: { eventName: string | null; eventId: string | null }[]) {
+  const names = selections
+    .map((selection) => selection.eventName ?? selection.eventId ?? '')
+    .filter(Boolean);
+  return names.length ? names.join('、') : '-';
 }
 
 export function RegistrationManager({ competitions }: RegistrationManagerProps) {
@@ -107,19 +120,63 @@ export function RegistrationManager({ competitions }: RegistrationManagerProps) 
     );
   }, [data]);
 
+  const isTeamRole = user?.role === 'team';
   const canManageApproval = user?.role === 'admin' || user?.role === 'organizer';
-  const isParticipant = user?.role === 'team' || user?.role === 'participant';
+  const canCancel = user?.role === 'team' || user?.role === 'participant' || canManageApproval;
 
   const pageSize = data?.pagination.pageSize ?? 20;
   const total = data?.pagination.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  const registeredCompetitions = useMemo(() => {
+    if (!isTeamRole || !data) return [];
+    const map = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        status: RegistrationStatus;
+        submittedAt: string;
+        events: string;
+      }
+    >();
+
+    data.registrations.forEach((registration) => {
+      const existing = map.get(registration.competitionId);
+      const eventText = formatSelections(registration.selections);
+      if (!existing) {
+        map.set(registration.competitionId, {
+          id: registration.competitionId,
+          name: registration.competitionName,
+          status: registration.status,
+          submittedAt: registration.createdAt,
+          events: eventText
+        });
+        return;
+      }
+
+      if (new Date(registration.createdAt).getTime() > new Date(existing.submittedAt).getTime()) {
+        map.set(registration.competitionId, {
+          id: registration.competitionId,
+          name: registration.competitionName,
+          status: registration.status,
+          submittedAt: registration.createdAt,
+          events: eventText
+        });
+      }
+    });
+
+    return Array.from(map.values());
+  }, [data, isTeamRole]);
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>报名管理</CardTitle>
         <CardDescription>
-          查看与筛选报名记录，跟进审批进度，并支持修改备注与撤销操作。
+          {isTeamRole
+            ? '查看队伍已报名的赛事，跟踪审核状态并可在截止前撤销报名。'
+            : '查看与筛选全部报名记录，跟进审批进度，并支持修改备注与撤销操作。'}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -131,78 +188,121 @@ export function RegistrationManager({ competitions }: RegistrationManagerProps) 
             </span>
           )}
         </div>
-        <div className="grid gap-3 md:grid-cols-4">
-          <div className="rounded-md border border-border p-3">
-            <p className="text-xs text-muted-foreground">待审核</p>
-            <p className="text-lg font-semibold text-amber-600 dark:text-amber-500">
-              {summary.pending}
-            </p>
-          </div>
-          <div className="rounded-md border border-border p-3">
-            <p className="text-xs text-muted-foreground">已通过</p>
-            <p className="text-lg font-semibold text-green-600 dark:text-green-500">
-              {summary.approved}
-            </p>
-          </div>
-          <div className="rounded-md border border-border p-3">
-            <p className="text-xs text-muted-foreground">已驳回</p>
-            <p className="text-lg font-semibold text-destructive">{summary.rejected}</p>
-          </div>
-          <div className="rounded-md border border-border p-3">
-            <p className="text-xs text-muted-foreground">已撤销</p>
-            <p className="text-lg font-semibold text-muted-foreground">{summary.cancelled}</p>
-          </div>
-        </div>
 
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="flex flex-wrap gap-3">
-            <select
-              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-              value={competitionFilter}
-              onChange={(event) => {
-                setCompetitionFilter(event.target.value);
-                setPage(1);
-              }}
-            >
-              <option value="">全部赛事</option>
-              {competitions.map((item) => (
-                <option value={item.id} key={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-
-            <select
-              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-              value={statusFilter}
-              onChange={(event) => {
-                setStatusFilter(event.target.value as RegistrationStatus | '');
-                setPage(1);
-              }}
-            >
-              {statusOptions.map((option) => (
-                <option key={option.label} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+        {isTeamRole ? (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium">已报名赛事</h3>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => queryClient.invalidateQueries({ queryKey: ['registrations'] })}
+                disabled={isFetching}
+              >
+                刷新
+              </Button>
+            </div>
+            {registeredCompetitions.length ? (
+              <div className="grid gap-3 md:grid-cols-2">
+                {registeredCompetitions.map((item) => (
+                  <div key={item.id} className="rounded-md border border-border p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-semibold">{item.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          报名时间：{formatDateTime(item.submittedAt)}
+                        </p>
+                      </div>
+                      <span className={`text-xs font-medium ${statusTone(item.status)}`}>
+                        {formatStatus(item.status)}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      项目：{item.events}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">暂无报名记录，请先完成报名。</p>
+            )}
           </div>
+        ) : (
+          <>
+            <div className="grid gap-3 md:grid-cols-4">
+              <div className="rounded-md border border-border p-3">
+                <p className="text-xs text-muted-foreground">待审核</p>
+                <p className="text-lg font-semibold text-amber-600 dark:text-amber-500">
+                  {summary.pending}
+                </p>
+              </div>
+              <div className="rounded-md border border-border p-3">
+                <p className="text-xs text-muted-foreground">已通过</p>
+                <p className="text-lg font-semibold text-green-600 dark:text-green-500">
+                  {summary.approved}
+                </p>
+              </div>
+              <div className="rounded-md border border-border p-3">
+                <p className="text-xs text-muted-foreground">已驳回</p>
+                <p className="text-lg font-semibold text-destructive">{summary.rejected}</p>
+              </div>
+              <div className="rounded-md border border-border p-3">
+                <p className="text-xs text-muted-foreground">已撤销</p>
+                <p className="text-lg font-semibold text-muted-foreground">{summary.cancelled}</p>
+              </div>
+            </div>
 
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setCompetitionFilter('');
-                setStatusFilter('');
-                setPage(1);
-              }}
-              disabled={!competitionFilter && !statusFilter}
-            >
-              重置筛选
-            </Button>
-          </div>
-        </div>
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="flex flex-wrap gap-3">
+                <select
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  value={competitionFilter}
+                  onChange={(event) => {
+                    setCompetitionFilter(event.target.value);
+                    setPage(1);
+                  }}
+                >
+                  <option value="">全部赛事</option>
+                  {competitions.map((item) => (
+                    <option value={item.id} key={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  value={statusFilter}
+                  onChange={(event) => {
+                    setStatusFilter(event.target.value as RegistrationStatus | '');
+                    setPage(1);
+                  }}
+                >
+                  {statusOptions.map((option) => (
+                    <option key={option.label} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setCompetitionFilter('');
+                    setStatusFilter('');
+                    setPage(1);
+                  }}
+                  disabled={!competitionFilter && !statusFilter}
+                >
+                  重置筛选
+                </Button>
+              </div>
+            </div>
+          </>
+        )}
 
         <div className="rounded-md border border-border">
           <table className="min-w-full text-sm">
@@ -246,15 +346,11 @@ export function RegistrationManager({ competitions }: RegistrationManagerProps) 
                     <td className="px-3 py-3">
                       <div className="font-medium">{registration.competitionName}</div>
                       <div className="text-xs text-muted-foreground">
-                        提交于 {new Date(registration.createdAt).toLocaleString()}
+                        提交于 {formatDateTime(registration.createdAt)}
                       </div>
                     </td>
                     <td className="px-3 py-3 text-xs text-muted-foreground">
-                      {registration.selections.length
-                        ? registration.selections
-                            .map((selection) => selection.eventName ?? selection.eventId ?? '-')
-                            .join('、')
-                        : '-'}
+                      {formatSelections(registration.selections)}
                     </td>
                     <td className="px-3 py-3">
                       <div>{registration.participant.contact ?? '-'}</div>
@@ -282,7 +378,10 @@ export function RegistrationManager({ competitions }: RegistrationManagerProps) 
                               size="sm"
                               variant="outline"
                               onClick={() =>
-                                approveMutation.mutate({ id: registration.id, status: 'approved' })
+                                approveMutation.mutate({
+                                  id: registration.id,
+                                  status: 'approved'
+                                })
                               }
                               disabled={approveMutation.isPending || isFetching}
                             >
@@ -292,7 +391,10 @@ export function RegistrationManager({ competitions }: RegistrationManagerProps) 
                               size="sm"
                               variant="outline"
                               onClick={() =>
-                                approveMutation.mutate({ id: registration.id, status: 'rejected' })
+                                approveMutation.mutate({
+                                  id: registration.id,
+                                  status: 'rejected'
+                                })
                               }
                               disabled={approveMutation.isPending || isFetching}
                             >
@@ -300,7 +402,7 @@ export function RegistrationManager({ competitions }: RegistrationManagerProps) 
                             </Button>
                           </>
                         )}
-                        {registration.status !== 'cancelled' && (
+                        {canManageApproval && registration.status !== 'cancelled' && (
                           <Button
                             size="sm"
                             variant="outline"
@@ -315,18 +417,17 @@ export function RegistrationManager({ competitions }: RegistrationManagerProps) 
                             修改备注
                           </Button>
                         )}
-                        {(isParticipant || canManageApproval) &&
-                          registration.status !== 'cancelled' && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="text-destructive"
-                              onClick={() => cancelMutation.mutate(registration.id)}
-                              disabled={cancelMutation.isPending}
-                            >
-                              撤销
-                            </Button>
-                          )}
+                        {canCancel && registration.status !== 'cancelled' && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-destructive"
+                            onClick={() => cancelMutation.mutate(registration.id)}
+                            disabled={cancelMutation.isPending}
+                          >
+                            撤销
+                          </Button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -339,7 +440,7 @@ export function RegistrationManager({ competitions }: RegistrationManagerProps) 
         {totalPages > 1 && (
           <div className="flex items-center justify-between pt-2 text-sm">
             <span className="text-muted-foreground">
-              第 {page} / {totalPages} 页，共 {total} 条报名
+              第 {page} / {totalPages} 页，共 {total} 条记录
             </span>
             <div className="flex items-center gap-2">
               <Button

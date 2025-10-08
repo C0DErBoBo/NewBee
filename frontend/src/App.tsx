@@ -29,6 +29,7 @@ import {
 import { fetchAccounts, updateAccountRole, AccountSummary } from './services/admin';
 import { CompetitionWizard } from './components/CompetitionWizard';
 import { RegistrationManager } from './components/RegistrationManager';
+import { TeamMembersManager } from './components/TeamMembersManager';
 import { CompetitionDetailPanel } from './components/competition/CompetitionDetailPanel';
 import { cn } from './lib/utils';
 
@@ -57,6 +58,7 @@ export default function App() {
   const dispatch = useAppDispatch();
   const user = useAppSelector((state) => state.auth.user);
   const isAdmin = user?.role === 'admin';
+  const isTeam = user?.role === 'team';
 
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
@@ -686,6 +688,7 @@ export default function App() {
 
             <TabsContent value="registrations" className="space-y-6">
               <RegistrationManager competitions={competitionData} />
+              {isTeam && <TeamMembersManager />}
             </TabsContent>
 
             {isAdmin && (
