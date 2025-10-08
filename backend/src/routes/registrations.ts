@@ -244,6 +244,8 @@ registrationsRouter.get(
   }
 );
 
+export { registrationsRouter };
+
 registrationsRouter.post(
   '/',
   authGuard,

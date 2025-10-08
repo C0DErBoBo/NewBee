@@ -9,6 +9,9 @@
   "scripts": {
     "deploy:cloudbase": "node scripts/deploy-cloudbase.cjs",
     "dev": "pnpm --parallel --filter backend --filter frontend dev",
+    "dev:local": "node scripts/dev-local.cjs",
+    "dev:local:db": "node scripts/dev-local.cjs db",
+    "dev:local:down": "node scripts/dev-local.cjs down",
     "dev:frontend": "pnpm --filter frontend dev",
     "dev:backend": "pnpm --filter backend dev",
     "build:frontend": "pnpm --filter frontend build",

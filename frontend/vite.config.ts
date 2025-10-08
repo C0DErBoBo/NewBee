@@ -14,7 +14,8 @@ export default defineConfig({
     open: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:4000',
+        // 强制走 IPv4，避免 Windows 下 ::1 映射问题
+        target: 'http://127.0.0.1:4000',
         changeOrigin: true,
         secure: false
       }
