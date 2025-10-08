@@ -28,10 +28,11 @@ import {
 } from './services/auth';
 import { fetchAccounts, updateAccountRole, AccountSummary } from './services/admin';
 import { CompetitionWizard } from './components/CompetitionWizard';
+import { RegistrationManager } from './components/RegistrationManager';
 import { CompetitionDetailPanel } from './components/competition/CompetitionDetailPanel';
 import { cn } from './lib/utils';
 
-type MainTab = 'competition' | 'account' | 'admin';
+type MainTab = 'competition' | 'registrations' | 'account' | 'admin';
 
 interface ToastState {
   text: string;
@@ -533,6 +534,7 @@ export default function App() {
           <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as MainTab)}>
             <TabsList className="mb-6">
               <TabsTrigger value="competition">赛事管理</TabsTrigger>
+              <TabsTrigger value="registrations">报名管理</TabsTrigger>
               <TabsTrigger value="account">账号信息</TabsTrigger>
               {isAdmin && <TabsTrigger value="admin">账号管理</TabsTrigger>}
             </TabsList>
