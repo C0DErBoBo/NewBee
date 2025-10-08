@@ -77,6 +77,35 @@ export async function migrate() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS competition_registrations (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      competition_id UUID NOT NULL REFERENCES competitions(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      team_id UUID REFERENCES teams(id) ON DELETE SET NULL,
+      participant_name TEXT NOT NULL,
+      participant_gender TEXT,
+      participant_identity TEXT,
+      contact TEXT,
+      extra JSONB NOT NULL DEFAULT '{}'::JSONB,
+      attachments JSONB NOT NULL DEFAULT '[]'::JSONB,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS competition_registration_events (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      registration_id UUID NOT NULL REFERENCES competition_registrations(id) ON DELETE CASCADE,
+      event_id UUID NOT NULL REFERENCES competition_events(id) ON DELETE CASCADE,
+      group_id UUID REFERENCES competition_groups(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (registration_id, event_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_registration_competition ON competition_registrations(competition_id);
+    CREATE INDEX IF NOT EXISTS idx_registration_user ON competition_registrations(user_id);
+    CREATE INDEX IF NOT EXISTS idx_registration_events_reg ON competition_registration_events(registration_id);
+
     CREATE TABLE IF NOT EXISTS refresh_tokens (
       id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

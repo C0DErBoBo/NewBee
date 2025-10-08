@@ -1,14 +1,26 @@
-import request from 'supertest';
+﻿import request from 'supertest';
 import jwt from 'jsonwebtoken';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app';
 
-const mockGenerateVerificationCode = vi.fn();
-const mockVerifyCode = vi.fn();
-const mockGenerateTokens = vi.fn();
-const mockRotateRefreshToken = vi.fn();
-const mockRevokeRefreshToken = vi.fn();
-const mockPoolQuery = vi.fn();
+const { mockGenerateVerificationCode } = vi.hoisted(() => ({
+  mockGenerateVerificationCode: vi.fn()
+}));
+const { mockVerifyCode } = vi.hoisted(() => ({
+  mockVerifyCode: vi.fn()
+}));
+const { mockGenerateTokens } = vi.hoisted(() => ({
+  mockGenerateTokens: vi.fn()
+}));
+const { mockRotateRefreshToken } = vi.hoisted(() => ({
+  mockRotateRefreshToken: vi.fn()
+}));
+const { mockRevokeRefreshToken } = vi.hoisted(() => ({
+  mockRevokeRefreshToken: vi.fn()
+}));
+const { mockPoolQuery } = vi.hoisted(() => ({
+  mockPoolQuery: vi.fn()
+}));
 
 vi.mock('../src/services/verificationCodeService', () => ({
   generateVerificationCode: mockGenerateVerificationCode,

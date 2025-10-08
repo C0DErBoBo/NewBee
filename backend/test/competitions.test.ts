@@ -1,11 +1,19 @@
-import request from 'supertest';
+﻿import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app';
 
-const mockPoolQuery = vi.fn();
-const mockPoolConnect = vi.fn();
-const mockClientQuery = vi.fn();
-const mockClientRelease = vi.fn();
+const { mockPoolQuery } = vi.hoisted(() => ({
+  mockPoolQuery: vi.fn()
+}));
+const { mockPoolConnect } = vi.hoisted(() => ({
+  mockPoolConnect: vi.fn()
+}));
+const { mockClientQuery } = vi.hoisted(() => ({
+  mockClientQuery: vi.fn()
+}));
+const { mockClientRelease } = vi.hoisted(() => ({
+  mockClientRelease: vi.fn()
+}));
 
 vi.mock('../src/database/client', () => ({
   pool: {
