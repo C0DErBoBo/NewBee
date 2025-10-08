@@ -1,4 +1,5 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { X } from 'lucide-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useAppDispatch, useAppSelector } from './store';
 import { loginSuccess, logout } from './store/authSlice';
@@ -27,6 +28,7 @@ import {
 } from './services/auth';
 import { fetchAccounts, updateAccountRole, AccountSummary } from './services/admin';
 import { CompetitionWizard } from './components/CompetitionWizard';
+import { cn } from './lib/utils';
 
 type MainTab = 'competition' | 'account' | 'admin';
 
@@ -59,9 +61,12 @@ export default function App() {
   const [wechatCode, setWechatCode] = useState('');
   const [countdown, setCountdown] = useState(0);
   const [toast, setToast] = useState<ToastState | null>(null);
+  const [isToastVisible, setIsToastVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<MainTab>('competition');
   const [wizardState, setWizardState] = useState<WizardState>(initialWizardState);
+  const toastAutoDismissRef = useRef<number | null>(null);
+  const toastRemoveRef = useRef<number | null>(null);
 
   const competitionsQuery = useQuery({
     queryKey: ['dashboard-competitions'],
@@ -74,6 +79,50 @@ export default function App() {
     queryFn: fetchAccounts,
     enabled: isAdmin
   });
+
+  const clearToastTimers = () => {
+    if (toastAutoDismissRef.current) {
+      window.clearTimeout(toastAutoDismissRef.current);
+      toastAutoDismissRef.current = null;
+    }
+    if (toastRemoveRef.current) {
+      window.clearTimeout(toastRemoveRef.current);
+      toastRemoveRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    if (!toast) {
+      clearToastTimers();
+      setIsToastVisible(false);
+      return;
+    }
+
+    clearToastTimers();
+    setIsToastVisible(true);
+
+    toastAutoDismissRef.current = window.setTimeout(() => {
+      setIsToastVisible(false);
+      toastRemoveRef.current = window.setTimeout(() => {
+        setToast(null);
+        toastRemoveRef.current = null;
+      }, 300);
+    }, 2500);
+
+    return () => {
+      clearToastTimers();
+    };
+  }, [toast]);
+
+  const handleToastClose = () => {
+    if (!toast) return;
+    clearToastTimers();
+    setIsToastVisible(false);
+    toastRemoveRef.current = window.setTimeout(() => {
+      setToast(null);
+      toastRemoveRef.current = null;
+    }, 200);
+  };
 
   const requestCodeMutation = useMutation({
     mutationFn: (phoneNumber: string) => requestPhoneCode(phoneNumber),
@@ -505,13 +554,32 @@ export default function App() {
       {(toast || error) && (
         <section className="container pb-8">
           <Card className="bg-muted/40">
-            <CardContent className="py-3 text-sm">
-              {toast && (
-                <span className={toast.variant === 'success' ? 'text-green-600 dark:text-green-500' : 'text-muted-foreground'}>
-                  {toast.text}
-                </span>
-              )}
-              {error && <span className="ml-4 text-destructive">{error}</span>}
+            <CardContent className="py-4 text-sm">
+              <div className="flex flex-col gap-3">
+                {toast && (
+                  <div
+                    className={cn(
+                      'flex items-center justify-between gap-3 rounded-md border border-border bg-background/90 px-3 py-2 shadow-sm transition-all duration-300',
+                      toast.variant === 'success'
+                        ? 'text-green-600 dark:text-green-500'
+                        : 'text-muted-foreground',
+                      isToastVisible ? 'opacity-100 translate-y-0' : 'pointer-events-none opacity-0 -translate-y-2'
+                    )}
+                  >
+                    <span>{toast.text}</span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                      onClick={handleToastClose}
+                      aria-label="关闭提示"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
+                {error && <span className="text-destructive">{error}</span>}
+              </div>
             </CardContent>
           </Card>
         </section>

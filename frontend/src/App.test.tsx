@@ -3,15 +3,25 @@ import userEvent from '@testing-library/user-event';
 import App from './App';
 import { AppProviders } from './providers/AppProviders';
 
-const mockFetchEventTemplates = vi.fn().mockResolvedValue([
-  { name: '100m', category: 'track', unitType: 'individual' }
-]);
-const mockFetchCompetitions = vi.fn().mockResolvedValue([]);
-const mockFetchCompetitionDetail = vi.fn();
-const mockCreateCompetition = vi.fn().mockResolvedValue({ id: 'comp-1' });
-const mockUpdateCompetition = vi.fn();
-const mockFetchAccounts = vi.fn().mockResolvedValue([]);
-const mockUpdateAccountRole = vi.fn();
+const {
+  mockFetchEventTemplates,
+  mockFetchCompetitions,
+  mockFetchCompetitionDetail,
+  mockCreateCompetition,
+  mockUpdateCompetition,
+  mockFetchAccounts,
+  mockUpdateAccountRole
+} = vi.hoisted(() => ({
+  mockFetchEventTemplates: vi.fn().mockResolvedValue([
+    { name: '100m', category: 'track', unitType: 'individual' }
+  ]),
+  mockFetchCompetitions: vi.fn().mockResolvedValue([]),
+  mockFetchCompetitionDetail: vi.fn(),
+  mockCreateCompetition: vi.fn().mockResolvedValue({ id: 'comp-1' }),
+  mockUpdateCompetition: vi.fn(),
+  mockFetchAccounts: vi.fn().mockResolvedValue([]),
+  mockUpdateAccountRole: vi.fn()
+}));
 
 vi.mock('@/services/competitions', () => ({
   fetchEventTemplates: mockFetchEventTemplates,
