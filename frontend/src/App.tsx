@@ -543,6 +543,11 @@ export default function App() {
                   competitionId={selectedCompetitionId}
                   onBack={() => setSelectedCompetitionId(null)}
                   onOpenWizard={(detail) => openEditWizard(detail.id, detail)}
+                  onSuccess={(message) => {
+                    setToast({ text: message, variant: 'success' });
+                    competitionsQuery.refetch();
+                  }}
+                  onError={(message) => setError(message)}
                 />
               ) : (
                 <Card>
