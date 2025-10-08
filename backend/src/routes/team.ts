@@ -143,7 +143,8 @@ async function syncCompetitionRegistrations(options: {
           SET participant_gender = $1,
               participant_identity = $2,
               extra = jsonb_strip_nulls(
-                COALESCE(extra, '{}'::jsonb) || jsonb_build_object('group', $2, 'gender', $1)
+                COALESCE(extra, '{}'::jsonb) ||
+                jsonb_build_object('group', $2::text, 'gender', $1::text)
               ),
               updated_at = NOW()
           WHERE id = $3
@@ -179,7 +180,7 @@ async function syncCompetitionRegistrations(options: {
             status
           )
           VALUES ($1, $2, $3, $4, $5, $6, NULL,
-            jsonb_build_object('group', $6, 'gender', $5),
+            jsonb_build_object('group', $6::text, 'gender', $5::text),
             '[]', 'pending')
           RETURNING id
         `,
