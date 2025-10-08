@@ -3,6 +3,16 @@ import userEvent from '@testing-library/user-event';
 import App from './App';
 import { AppProviders } from './providers/AppProviders';
 
+vi.mock('@/services/competitions', () => ({
+  fetchEventTemplates: vi.fn().mockResolvedValue([
+    { name: '100m', category: 'track', unitType: 'individual' }
+  ]),
+  fetchCompetitions: vi.fn().mockResolvedValue([]),
+  createCompetition: vi.fn().mockResolvedValue({
+    id: 'comp-1'
+  })
+}));
+
 function renderWithProviders() {
   return render(
     <AppProviders>

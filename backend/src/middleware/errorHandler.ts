@@ -15,9 +15,13 @@ export function errorHandler(
   }
 
   if (error instanceof Error) {
+    const statusCode =
+      (error as { statusCode?: number }).statusCode ??
+      (error as { status?: number }).status ??
+      500;
     // eslint-disable-next-line no-console
     console.error('Unhandled error:', error);
-    return res.status(500).json({ message: error.message });
+    return res.status(statusCode).json({ message: error.message });
   }
 
   return res.status(500).json({ message: '未知错误' });

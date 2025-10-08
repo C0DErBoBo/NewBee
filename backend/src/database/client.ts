@@ -14,6 +14,7 @@ export async function migrate() {
     CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
       phone VARCHAR(20) UNIQUE,
+      password_hash TEXT,
       wechat_openid VARCHAR(64),
       display_name TEXT,
       role VARCHAR(32) NOT NULL DEFAULT 'organizer',
@@ -28,6 +29,49 @@ export async function migrate() {
       end_at TIMESTAMPTZ,
       config JSONB,
       created_by UUID REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS competition_events (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      competition_id UUID NOT NULL REFERENCES competitions(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      category TEXT NOT NULL,
+      unit_type TEXT NOT NULL,
+      is_custom BOOLEAN NOT NULL DEFAULT FALSE,
+      config JSONB NOT NULL DEFAULT '{}'::JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS competition_groups (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      competition_id UUID NOT NULL REFERENCES competitions(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      gender TEXT NOT NULL,
+      age_bracket TEXT,
+      identity_type TEXT,
+      max_participants INTEGER,
+      team_size INTEGER,
+      config JSONB NOT NULL DEFAULT '{}'::JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS competition_rules (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      competition_id UUID NOT NULL UNIQUE REFERENCES competitions(id) ON DELETE CASCADE,
+      scoring JSONB NOT NULL DEFAULT '{}'::JSONB,
+      flow JSONB NOT NULL DEFAULT '{}'::JSONB,
+      penalties JSONB NOT NULL DEFAULT '{}'::JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS teams (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      name TEXT NOT NULL,
+      contact_phone VARCHAR(20),
+      members JSONB NOT NULL DEFAULT '[]'::JSONB,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
@@ -50,9 +94,13 @@ export async function migrate() {
     CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
     CREATE INDEX IF NOT EXISTS idx_verification_codes_phone ON verification_codes(phone);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wechat_openid ON users(wechat_openid) WHERE wechat_openid IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_competition_events_competition ON competition_events(competition_id);
+    CREATE INDEX IF NOT EXISTS idx_competition_groups_competition ON competition_groups(competition_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_user ON teams(user_id);
 
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS display_name TEXT,
+      ADD COLUMN IF NOT EXISTS password_hash TEXT,
       ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
     DO $$

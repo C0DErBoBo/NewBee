@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { useAppDispatch, useAppSelector } from './store';
 import { loginSuccess, logout } from './store/authSlice';
 import { Button } from './components/ui/button';
@@ -19,6 +19,8 @@ import {
   loginWithWechat,
   requestPhoneCode
 } from './services/auth';
+import { CompetitionWizard } from './components/CompetitionWizard';
+import { fetchCompetitions } from './services/competitions';
 
 export default function App() {
   const dispatch = useAppDispatch();
@@ -34,7 +36,7 @@ export default function App() {
   const requestCodeMutation = useMutation({
     mutationFn: (phoneNumber: string) => requestPhoneCode(phoneNumber),
     onSuccess: () => {
-      setMessage('验证码已发送（开发环境下输出到控制台）');
+      setMessage('验证码已发送（开发环境下输出到服务端日志）');
       setError(null);
       setCountdown(60);
     },
@@ -59,12 +61,19 @@ export default function App() {
     mutationFn: loginWithWechat,
     onSuccess: (data) => {
       dispatch(loginSuccess(data));
-      setMessage('微信登录成功（已使用模拟 openId）');
+      setMessage('微信登录成功（使用模拟 openId）');
       setError(null);
     },
     onError: (err: unknown) => {
       setError(err instanceof Error ? err.message : '微信登录失败，请重试');
     }
+  });
+
+  const competitionsQuery = useQuery({
+    queryKey: ['competitions'],
+    queryFn: fetchCompetitions,
+    enabled: Boolean(user),
+    retry: false
   });
 
   useEffect(() => {
@@ -74,6 +83,17 @@ export default function App() {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [countdown]);
+
+  useEffect(() => {
+    if (!user) {
+      setMessage(null);
+      setError(null);
+      setCountdown(0);
+      setPhone('');
+      setCode('');
+      setWechatCode('');
+    }
+  }, [user]);
 
   const canSendCode = useMemo(() => {
     return /^1\d{10}$/.test(phone) && countdown === 0;
@@ -208,16 +228,14 @@ export default function App() {
                   {message}
                 </p>
               )}
-              {error && (
-                <p className="text-sm text-destructive">{error}</p>
-              )}
+              {error && <p className="text-sm text-destructive">{error}</p>}
             </CardFooter>
           )}
         </Card>
 
         <Card className="h-fit">
           <CardHeader>
-            <CardTitle>当前状态</CardTitle>
+            <CardTitle>账号信息</CardTitle>
             <CardDescription>
               登录后可继续配置赛事、角色权限与报名流程。
             </CardDescription>
@@ -226,22 +244,37 @@ export default function App() {
             {user ? (
               <>
                 <div>
-                  <p className="text-sm text-muted-foreground">账号信息</p>
+                  <p className="text-sm text-muted-foreground">当前用户</p>
                   <p className="text-lg font-semibold">
                     {user.displayName ?? user.phone ?? '未填写昵称'}
                   </p>
-                  <p className="text-sm text-muted-foreground">
-                    角色：{user.role}
-                  </p>
+                  <p className="text-sm text-muted-foreground">角色：{user.role}</p>
                   {user.phone && (
                     <p className="text-sm text-muted-foreground">
                       手机号：{user.phone}
                     </p>
                   )}
                 </div>
-                <p className="text-sm text-muted-foreground">
-                  下一步可前往赛事管理创建赛事、配置项目模板与报名规则。
-                </p>
+                <div>
+                  <p className="text-sm text-muted-foreground">赛事列表</p>
+                  {competitionsQuery.isLoading && (
+                    <p className="text-sm">加载中...</p>
+                  )}
+                  {!competitionsQuery.isLoading &&
+                    (competitionsQuery.data?.length ? (
+                      <ul className="space-y-1 text-sm">
+                        {competitionsQuery.data.map((competition) => (
+                          <li key={competition.id}>
+                            {competition.name}（{competition.location ?? '待定'}）
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        暂无赛事，欢迎创建新的赛事。
+                      </p>
+                    ))}
+                </div>
               </>
             ) : (
               <p className="text-sm text-muted-foreground">
@@ -251,6 +284,16 @@ export default function App() {
           </CardContent>
         </Card>
       </section>
+
+      {user && (
+        <section className="container pb-16">
+          <CompetitionWizard
+            onCreated={() => {
+              competitionsQuery.refetch();
+            }}
+          />
+        </section>
+      )}
     </main>
   );
 }
