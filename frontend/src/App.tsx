@@ -387,14 +387,10 @@ export default function App() {
                   <td className="py-2 pl-4 text-right">
                     <div className="flex justify-end gap-2">
                       {onViewDetail && (
-                        <Button variant="ghost" size="sm" onClick={() => onViewDetail(item.id)}>
-                          $([char]0x8BE6)$([char]0x60C5)
-                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => onViewDetail(item.id)}>详情</Button>
                       )}
                       {onOpenWizard && (
-                        <Button variant="ghost" size="sm" onClick={() => onOpenWizard(item.id)}>
-                          $([char]0x5411)$([char]0x5BFC)
-                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => onOpenWizard(item.id)}>向导</Button>
                       )}
                     </div>
                   </td>
