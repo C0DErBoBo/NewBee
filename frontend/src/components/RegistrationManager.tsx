@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Loader2 } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -122,6 +123,14 @@ export function RegistrationManager({ competitions }: RegistrationManagerProps) 
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>共 {total} 条记录</span>
+          {isFetching && (
+            <span className="inline-flex items-center gap-1">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> 同步中...
+            </span>
+          )}
+        </div>
         <div className="grid gap-3 md:grid-cols-4">
           <div className="rounded-md border border-border p-3">
             <p className="text-xs text-muted-foreground">待审核</p>

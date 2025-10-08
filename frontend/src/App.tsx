@@ -684,6 +684,10 @@ export default function App() {
               </Card>
             </TabsContent>
 
+            <TabsContent value="registrations" className="space-y-6">
+              <RegistrationManager competitions={competitionData} />
+            </TabsContent>
+
             {isAdmin && (
               <TabsContent value="admin" className="space-y-6">
                 <Card>
