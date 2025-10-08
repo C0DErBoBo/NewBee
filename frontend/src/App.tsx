@@ -74,6 +74,16 @@ export default function App() {
   const [sortKey, setSortKey] = useState<'createdAt' | 'startAt' | 'name'>('createdAt');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(1);
+  const [teamMembersModal, setTeamMembersModal] = useState<{
+    open: boolean;
+    competitionId: string | null;
+  }>({
+    open: false,
+    competitionId: null
+  });
+  const [registrationCompetitionTarget, setRegistrationCompetitionTarget] = useState<string | null>(
+    null
+  );
   const pageSize = 6;
   const toastAutoDismissRef = useRef<number | null>(null);
   const toastRemoveRef = useRef<number | null>(null);
@@ -256,8 +266,18 @@ export default function App() {
   };
 
   const handleViewDetail = (competitionId: string) => {
+    if (isTeam) return;
     setSelectedCompetitionId(competitionId);
     setError(null);
+  };
+
+  const handleTeamSignup = (competitionId: string) => {
+    setRegistrationCompetitionTarget(competitionId);
+    setActiveTab('registrations');
+  };
+
+  const handleOpenTeamMembers = (competitionId: string | null) => {
+    setTeamMembersModal({ open: true, competitionId });
   };
   const openCreateWizard = () => {
     setWizardState({ visible: true, mode: 'create', loading: false, competition: undefined });
@@ -339,6 +359,12 @@ export default function App() {
     }
   }, [currentPage, page]);
 
+  useEffect(() => {
+    if (isTeam && selectedCompetitionId) {
+      setSelectedCompetitionId(null);
+    }
+  }, [isTeam, selectedCompetitionId]);
+
   const paginatedCompetitions = useMemo(() => {
     const startIndex = (currentPage - 1) * pageSize;
     return filteredCompetitions.slice(startIndex, startIndex + pageSize);
@@ -353,9 +379,18 @@ export default function App() {
       highlightedId?: string | null;
       onOpenWizard?: (id: string) => void;
       onViewDetail?: (id: string) => void;
+      onTeamSignup?: (id: string) => void;
+      onTeamManageMembers?: (id: string) => void;
     }
   ) => {
-    const { showActions = false, highlightedId = null, onOpenWizard, onViewDetail } = options ?? {};
+    const {
+      showActions = false,
+      highlightedId = null,
+      onOpenWizard,
+      onViewDetail,
+      onTeamSignup,
+      onTeamManageMembers
+    } = options ?? {};
 
     return (
       <div className="overflow-x-auto">
@@ -389,11 +424,36 @@ export default function App() {
                 {showActions && (
                   <td className="py-2 pl-4 text-right">
                     <div className="flex justify-end gap-2">
-                      {onViewDetail && (
-                        <Button variant="ghost" size="sm" onClick={() => onViewDetail(item.id)}>详情</Button>
-                      )}
-                      {onOpenWizard && (
-                        <Button variant="ghost" size="sm" onClick={() => onOpenWizard(item.id)}>向导</Button>
+                      {isTeam ? (
+                        <>
+                          {onTeamSignup && (
+                            <Button variant="ghost" size="sm" onClick={() => onTeamSignup(item.id)}>
+                              去报名
+                            </Button>
+                          )}
+                          {onTeamManageMembers && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => onTeamManageMembers(item.id)}
+                            >
+                              队员管理
+                            </Button>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {onViewDetail && (
+                            <Button variant="ghost" size="sm" onClick={() => onViewDetail(item.id)}>
+                              详情
+                            </Button>
+                          )}
+                          {onOpenWizard && (
+                            <Button variant="ghost" size="sm" onClick={() => onOpenWizard(item.id)}>
+                              向导
+                            </Button>
+                          )}
+                        </>
                       )}
                     </div>
                   </td>
@@ -542,7 +602,7 @@ export default function App() {
             </TabsList>
 
             <TabsContent value="competition" className="space-y-6">
-              {selectedCompetitionId ? (
+              {selectedCompetitionId && !isTeam ? (
                 <CompetitionDetailPanel
                   competitionId={selectedCompetitionId}
                   onBack={() => setSelectedCompetitionId(null)}
@@ -559,7 +619,11 @@ export default function App() {
                     <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                       <div>
                         <CardTitle>赛事列表</CardTitle>
-                        <CardDescription>使用搜索、排序与分页快速定位需要管理的赛事。</CardDescription>
+                        <CardDescription>
+                          {isTeam
+                            ? '浏览可报名的赛事，快速进入报名或维护队员信息。'
+                            : '使用搜索、排序与分页快速定位需要管理的赛事。'}
+                        </CardDescription>
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <Button
@@ -570,7 +634,7 @@ export default function App() {
                         >
                           重置筛选
                         </Button>
-                        <Button onClick={openCreateWizard}>新增比赛</Button>
+                        {!isTeam && <Button onClick={openCreateWizard}>新增比赛</Button>}
                       </div>
                     </div>
                     <div className="grid gap-2 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
@@ -603,18 +667,29 @@ export default function App() {
                       <p className="text-sm text-muted-foreground">加载中...</p>
                     ) : filteredCompetitions.length ? (
                       <>
-                        {renderCompetitionTable(paginatedCompetitions, {
-                          showActions: true,
-                          highlightedId: selectedCompetitionId,
-                          onViewDetail: handleViewDetail,
-                          onOpenWizard: (id) => openEditWizard(id)
-                        })}
+                        {renderCompetitionTable(
+                          paginatedCompetitions,
+                          isTeam
+                            ? {
+                                showActions: true,
+                                onTeamSignup: handleTeamSignup,
+                                onTeamManageMembers: (id) => handleOpenTeamMembers(id)
+                              }
+                            : {
+                                showActions: true,
+                                highlightedId: selectedCompetitionId,
+                                onViewDetail: handleViewDetail,
+                                onOpenWizard: (id) => openEditWizard(id)
+                              }
+                        )}
                         {renderPagination()}
                       </>
                     ) : competitionData.length ? (
                       <p className="text-sm text-muted-foreground">未找到匹配的赛事，请调整筛选条件。</p>
                     ) : (
-                      <p className="text-sm text-muted-foreground">暂无赛事记录，点击“新增比赛”开始配置。</p>
+                      <p className="text-sm text-muted-foreground">
+                        {isTeam ? '暂无赛事记录。' : '暂无赛事记录，点击“新增比赛”开始配置。'}
+                      </p>
                     )}
                   </CardContent>
                 </Card>
@@ -687,8 +762,12 @@ export default function App() {
             </TabsContent>
 
             <TabsContent value="registrations" className="space-y-6">
-              <RegistrationManager competitions={competitionData} />
-              {isTeam && <TeamMembersManager />}
+              <RegistrationManager
+                competitions={competitionData}
+                externalCompetitionId={registrationCompetitionTarget}
+                onExternalCompetitionConsumed={() => setRegistrationCompetitionTarget(null)}
+              />
+              {isTeam && <TeamMembersManager competitions={competitionData} />}
             </TabsContent>
 
             {isAdmin && (
@@ -794,6 +873,16 @@ export default function App() {
             </CardContent>
           </Card>
         </section>
+      )}
+
+      {isTeam && (
+        <TeamMembersManager
+          competitions={competitionData}
+          variant="modal"
+          open={teamMembersModal.open}
+          initialCompetitionId={teamMembersModal.competitionId}
+          onClose={() => setTeamMembersModal({ open: false, competitionId: null })}
+        />
       )}
     </main>
   );

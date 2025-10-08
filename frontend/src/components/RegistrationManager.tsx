@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from './ui/button';
@@ -15,6 +15,8 @@ import { useAppSelector } from '@/store';
 
 interface RegistrationManagerProps {
   competitions: CompetitionSummary[];
+  externalCompetitionId?: string | null;
+  onExternalCompetitionConsumed?: () => void;
 }
 
 const statusOptions: Array<{ label: string; value: RegistrationStatus | '' }> = [
@@ -67,13 +69,25 @@ function formatSelections(selections: { eventName: string | null; eventId: strin
   return names.length ? names.join('、') : '-';
 }
 
-export function RegistrationManager({ competitions }: RegistrationManagerProps) {
+export function RegistrationManager({
+  competitions,
+  externalCompetitionId,
+  onExternalCompetitionConsumed
+}: RegistrationManagerProps) {
   const user = useAppSelector((state) => state.auth.user);
   const queryClient = useQueryClient();
 
   const [statusFilter, setStatusFilter] = useState<RegistrationStatus | ''>('');
   const [competitionFilter, setCompetitionFilter] = useState<string | ''>('');
   const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    if (!externalCompetitionId) return;
+    setCompetitionFilter(externalCompetitionId);
+    setStatusFilter('');
+    setPage(1);
+    onExternalCompetitionConsumed?.();
+  }, [externalCompetitionId, onExternalCompetitionConsumed]);
 
   const { data, isLoading, isFetching } = useQuery<RegistrationListResponse>({
     queryKey: ['registrations', { statusFilter, competitionFilter, page }],

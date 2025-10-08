@@ -25,9 +25,18 @@ export async function fetchTeamMembers() {
   return data;
 }
 
-export async function updateTeamMembers(members: TeamMember[]) {
-  const { data } = await apiClient.put<TeamMembersResponse>('/team/members', {
+export async function updateTeamMembers(members: TeamMember[], competitionId?: string | null) {
+  const payload: {
+    members: TeamMember[];
+    competitionId?: string;
+  } = {
     members
-  });
+  };
+
+  if (competitionId) {
+    payload.competitionId = competitionId;
+  }
+
+  const { data } = await apiClient.put<TeamMembersResponse>('/team/members', payload);
   return data;
 }
