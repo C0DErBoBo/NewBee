@@ -32,7 +32,7 @@ function formatStatus(status: RegistrationStatus) {
     case 'pending':
       return '待审核';
     case 'approved':
-      return '已通过';
+      return '已报名';
     case 'rejected':
       return '已驳回';
     case 'cancelled':
@@ -53,6 +53,19 @@ function statusTone(status: RegistrationStatus) {
     default:
       return 'text-amber-600 dark:text-amber-500';
   }
+}
+
+function aggregateStatus(statuses: RegistrationStatus[]): RegistrationStatus | 'mixed' {
+  const unique = Array.from(new Set(statuses));
+  return unique.length === 1 ? unique[0] : 'mixed';
+}
+
+function aggregateStatusLabel(statuses: RegistrationStatus[]): { label: string; tone: string } {
+  const aggregated = aggregateStatus(statuses);
+  if (aggregated === 'mixed') {
+    return { label: '状态不一', tone: 'text-muted-foreground' };
+  }
+  return { label: formatStatus(aggregated), tone: statusTone(aggregated) };
 }
 
 function formatDateTime(value?: string | null) {
@@ -133,6 +146,86 @@ export function RegistrationManager({
       { pending: 0, approved: 0, rejected: 0, cancelled: 0 }
     );
   }, [data]);
+
+  const groupedTeams = useMemo(() => {
+    if (!competitionFilter || !data) return [] as Array<{
+      id: string;
+      name: string;
+      statusLabel: string;
+      statusTone: string;
+      members: Array<{
+        id: string;
+        name: string;
+        statusLabel: string;
+        statusTone: string;
+        events: string;
+        group: string | null;
+      }>;
+    }>;
+
+    const map = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        statuses: RegistrationStatus[];
+        members: Array<{
+          id: string;
+          name: string;
+          status: RegistrationStatus;
+          events: string;
+          group: string | null;
+        }>;
+      }
+    >();
+
+    data.registrations
+      .filter((registration) => registration.competitionId === competitionFilter)
+      .forEach((registration) => {
+        if (statusFilter && registration.status !== statusFilter) {
+          return;
+        }
+        const key = registration.team?.id ?? `individual-${registration.id}`;
+        const displayName = registration.team?.name ?? `${registration.participant.name}（个人）`;
+
+        if (!map.has(key)) {
+          map.set(key, {
+            id: key,
+            name: displayName,
+            statuses: [],
+            members: []
+          });
+        }
+
+        const group = map.get(key)!;
+        group.statuses.push(registration.status);
+        group.members.push({
+          id: registration.id,
+          name: registration.participant.name,
+          status: registration.status,
+          events: formatSelections(registration.selections),
+          group: registration.participant.organization ?? registration.participant.identityType ?? null
+        });
+      });
+
+    return Array.from(map.values()).map((group) => {
+      const { label, tone } = aggregateStatusLabel(group.statuses);
+      return {
+        id: group.id,
+        name: group.name,
+        statusLabel: label,
+        statusTone: tone,
+        members: group.members.map((member) => ({
+          id: member.id,
+          name: member.name,
+          statusLabel: formatStatus(member.status),
+          statusTone: statusTone(member.status),
+          events: member.events,
+          group: member.group
+        }))
+      };
+    });
+  }, [competitionFilter, data]);
 
   const isTeamRole = user?.role === 'team';
   const canManageApproval = user?.role === 'admin' || user?.role === 'organizer';
@@ -316,6 +409,50 @@ export function RegistrationManager({
               </div>
             </div>
           </>
+        )}
+
+        {competitionFilter && !isTeamRole && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium">已报名队伍与队员</h3>
+              <span className="text-xs text-muted-foreground">
+                共 {groupedTeams.length} 个队伍/个人
+              </span>
+            </div>
+            {groupedTeams.length ? (
+              groupedTeams.map((team) => (
+                <div key={team.id} className="rounded-md border border-border p-4">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold">{team.name}</p>
+                    </div>
+                    <span className={`text-xs font-medium ${team.statusTone}`}>{team.statusLabel}</span>
+                  </div>
+                  <ul className="mt-3 space-y-2">
+                    {team.members.map((member) => (
+                      <li
+                        key={member.id}
+                        className="flex flex-col gap-1 rounded-md bg-muted/50 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <div className="font-medium">
+                          {member.name}
+                          {member.group && (
+                            <span className="ml-2 text-xs text-muted-foreground">{member.group}</span>
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground sm:text-sm">
+                          项目：{member.events}
+                        </div>
+                        <span className={`text-xs font-medium ${member.statusTone}`}>{member.statusLabel}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-muted-foreground">当前赛事暂无报名记录。</p>
+            )}
+          </div>
         )}
 
         <div className="rounded-md border border-border">

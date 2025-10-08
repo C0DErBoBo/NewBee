@@ -160,6 +160,8 @@ export function TeamMembersManager({
       updateTeamMembers(members, competitionId),
     onSuccess: (data) => {
       queryClient.setQueryData(['team-members'], data);
+      queryClient.invalidateQueries({ queryKey: ['dashboard-competitions'] });
+      queryClient.invalidateQueries({ queryKey: ['registrations'] });
       setMembersDraft(normalizeMembers(data.members));
       setBulkInput('');
       setParseError(null);

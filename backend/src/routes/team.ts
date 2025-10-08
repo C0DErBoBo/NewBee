@@ -146,6 +146,7 @@ async function syncCompetitionRegistrations(options: {
                 COALESCE(extra, '{}'::jsonb) ||
                 jsonb_build_object('group', $2::text, 'gender', $1::text)
               ),
+              status = 'approved',
               updated_at = NOW()
           WHERE id = $3
         `,
@@ -156,7 +157,7 @@ async function syncCompetitionRegistrations(options: {
         await client.query(
           `
             UPDATE competition_registrations
-            SET status = 'pending', updated_at = NOW()
+            SET status = 'approved', updated_at = NOW()
             WHERE id = $1
           `,
           [existing.id]
@@ -181,7 +182,7 @@ async function syncCompetitionRegistrations(options: {
           )
           VALUES ($1, $2, $3, $4, $5, $6, NULL,
             jsonb_build_object('group', $6::text, 'gender', $5::text),
-            '[]', 'pending')
+            '[]', 'approved')
           RETURNING id
         `,
         [competitionId, userId, teamId, participantName, member.gender ?? null, member.group ?? null]

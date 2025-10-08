@@ -60,20 +60,26 @@ const updateCompetitionSchema = createCompetitionSchema.partial();
 async function fetchCompetition(competitionId: string) {
   const competitionResult = await pool.query(
     `
-      SELECT id,
-             name,
-             location,
-             start_at,
-             end_at,
-             signup_start_at,
-             signup_end_at,
-             config,
-             created_by,
-             created_at,
-             0::INT AS participant_count,
-             0::INT AS team_count
-      FROM competitions
-      WHERE id = $1
+      SELECT c.id,
+             c.name,
+             c.location,
+             c.start_at,
+             c.end_at,
+             c.signup_start_at,
+             c.signup_end_at,
+             c.config,
+             c.created_by,
+             c.created_at,
+             COALESCE(stats.participant_count, 0) AS participant_count,
+             COALESCE(stats.team_count, 0) AS team_count
+      FROM competitions c
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) FILTER (WHERE status <> 'cancelled') AS participant_count,
+               COUNT(DISTINCT team_id) FILTER (WHERE team_id IS NOT NULL AND status <> 'cancelled') AS team_count
+        FROM competition_registrations cr
+        WHERE cr.competition_id = c.id
+      ) stats ON TRUE
+      WHERE c.id = $1
     `,
     [competitionId]
   );
@@ -194,19 +200,25 @@ competitionRouter.get('/', authGuard, async (_req, res, next) => {
   try {
     const { rows } = await pool.query(
       `
-        SELECT id,
-               name,
-               location,
-               start_at,
-               end_at,
-               signup_start_at,
-               signup_end_at,
-               created_by,
-               created_at,
-               0::INT AS participant_count,
-               0::INT AS team_count
-        FROM competitions
-        ORDER BY created_at DESC
+        SELECT c.id,
+               c.name,
+               c.location,
+               c.start_at,
+               c.end_at,
+               c.signup_start_at,
+               c.signup_end_at,
+               c.created_by,
+               c.created_at,
+               COALESCE(stats.participant_count, 0) AS participant_count,
+               COALESCE(stats.team_count, 0) AS team_count
+        FROM competitions c
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*) FILTER (WHERE status <> 'cancelled') AS participant_count,
+                 COUNT(DISTINCT team_id) FILTER (WHERE team_id IS NOT NULL AND status <> 'cancelled') AS team_count
+          FROM competition_registrations cr
+          WHERE cr.competition_id = c.id
+        ) stats ON TRUE
+        ORDER BY c.created_at DESC
       `
     );
     res.json({
