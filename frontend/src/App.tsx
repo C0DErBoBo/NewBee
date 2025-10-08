@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+﻿import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useAppDispatch, useAppSelector } from './store';
@@ -28,6 +28,7 @@ import {
 } from './services/auth';
 import { fetchAccounts, updateAccountRole, AccountSummary } from './services/admin';
 import { CompetitionWizard } from './components/CompetitionWizard';
+import { CompetitionDetailPanel } from './components/competition/CompetitionDetailPanel';
 import { cn } from './lib/utils';
 
 type MainTab = 'competition' | 'account' | 'admin';
@@ -65,6 +66,12 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<MainTab>('competition');
   const [wizardState, setWizardState] = useState<WizardState>(initialWizardState);
+  const [selectedCompetitionId, setSelectedCompetitionId] = useState<string | null>(null);
+  const [searchKeyword, setSearchKeyword] = useState('');
+  const [sortKey, setSortKey] = useState<'createdAt' | 'startAt' | 'name'>('createdAt');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [page, setPage] = useState(1);
+  const pageSize = 6;
   const toastAutoDismissRef = useRef<number | null>(null);
   const toastRemoveRef = useRef<number | null>(null);
 
@@ -229,14 +236,36 @@ export default function App() {
 
   const handleLogout = () => {
     dispatch(logout());
+    setSelectedCompetitionId(null);
+    setSearchKeyword('');
+    setSortKey('createdAt');
+    setSortOrder('desc');
+    setPage(1);
+    setError(null);
     setToast({ text: '已退出登录', variant: 'info' });
   };
 
+  const handleResetFilters = () => {
+    setSearchKeyword('');
+    setSortKey('createdAt');
+    setSortOrder('desc');
+    setPage(1);
+  };
+
+  const handleViewDetail = (competitionId: string) => {
+    setSelectedCompetitionId(competitionId);
+    setError(null);
+  };
   const openCreateWizard = () => {
     setWizardState({ visible: true, mode: 'create', loading: false, competition: undefined });
   };
 
-  const openEditWizard = async (competitionId: string) => {
+  const openEditWizard = async (competitionId: string, preset?: CompetitionDetail) => {
+    if (preset) {
+      setWizardState({ visible: true, mode: 'edit', loading: false, competition: preset });
+      return;
+    }
+
     setWizardState({ visible: true, mode: 'edit', loading: true, competition: undefined });
     try {
       const detail = await fetchCompetitionDetail(competitionId);
@@ -252,40 +281,162 @@ export default function App() {
   const competitionData = competitionsQuery.data ?? [];
   const accountData = accountsQuery.data ?? [];
 
-  const renderCompetitionTable = (list: CompetitionSummary[]) => (
-    <div className="overflow-x-auto">
-      <table className="min-w-full text-sm">
-        <thead className="text-left text-muted-foreground">
-          <tr>
-            <th className="py-2 pr-4">名称</th>
-            <th className="py-2 pr-4">报名时间</th>
-            <th className="py-2 pr-4">比赛时间</th>
-            <th className="py-2 pr-4">地点</th>
-            <th className="py-2 pr-4 text-right">报名人数 / 团队</th>
-            <th className="py-2 pl-4 text-right">操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {list.map((item) => (
-            <tr key={item.id} className="border-t border-border">
-              <td className="py-2 pr-4 font-medium">{item.name}</td>
-              <td className="py-2 pr-4">{formatRange(item.signupStartAt, item.signupEndAt)}</td>
-              <td className="py-2 pr-4">{formatRange(item.startAt, item.endAt)}</td>
-              <td className="py-2 pr-4">{item.location ?? '-'}</td>
-              <td className="py-2 pr-4 text-right">
-                {item.stats.participantCount} / {item.stats.teamCount}
-              </td>
-              <td className="py-2 pl-4 text-right">
-                <Button variant="ghost" size="sm" onClick={() => openEditWizard(item.id)}>
-                  管理
-                </Button>
-              </td>
+  const keyword = searchKeyword.trim().toLowerCase();
+
+  const filteredCompetitions = useMemo(() => {
+    const matches = keyword
+      ? competitionData.filter((item) => {
+          const text = `${item.name} ${item.location ?? ''}`.toLowerCase();
+          return text.includes(keyword);
+        })
+      : competitionData;
+
+    const toTimestamp = (value?: string) => {
+      if (!value) return 0;
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+    };
+
+    const sorted = [...matches].sort((a, b) => {
+      let result = 0;
+      if (sortKey === 'name') {
+        result = a.name.localeCompare(b.name, 'zh-CN');
+      } else {
+        const aValue =
+          sortKey === 'createdAt'
+            ? toTimestamp(a.createdAt)
+            : toTimestamp(a.startAt ?? a.signupStartAt ?? a.createdAt);
+        const bValue =
+          sortKey === 'createdAt'
+            ? toTimestamp(b.createdAt)
+            : toTimestamp(b.startAt ?? b.signupStartAt ?? b.createdAt);
+        result = aValue - bValue;
+      }
+
+      if (result === 0) {
+        result = a.name.localeCompare(b.name, 'zh-CN');
+      }
+
+      return sortOrder === 'asc' ? result : -result;
+    });
+
+    return sorted;
+  }, [competitionData, keyword, sortKey, sortOrder]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [keyword, sortKey, sortOrder]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredCompetitions.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+
+  useEffect(() => {
+    if (page !== currentPage) {
+      setPage(currentPage);
+    }
+  }, [currentPage, page]);
+
+  const paginatedCompetitions = useMemo(() => {
+    const startIndex = (currentPage - 1) * pageSize;
+    return filteredCompetitions.slice(startIndex, startIndex + pageSize);
+  }, [filteredCompetitions, currentPage, pageSize]);
+
+  const filtersPristine = keyword === '' && sortKey === 'createdAt' && sortOrder === 'desc';
+
+  const renderCompetitionTable = (
+    list: CompetitionSummary[],
+    options?: {
+      showActions?: boolean;
+      highlightedId?: string | null;
+      onOpenWizard?: (id: string) => void;
+      onViewDetail?: (id: string) => void;
+    }
+  ) => {
+    const { showActions = false, highlightedId = null, onOpenWizard, onViewDetail } = options ?? {};
+
+    return (
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead className="text-left text-muted-foreground">
+            <tr>
+              <th className="py-2 pr-4">名称</th>
+              <th className="py-2 pr-4">报名时间</th>
+              <th className="py-2 pr-4">比赛时间</th>
+              <th className="py-2 pr-4">地点</th>
+              <th className="py-2 pr-4 text-right">报名人数 / 团队</th>
+              {showActions && <th className="py-2 pl-4 text-right">操作</th>}
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+          </thead>
+          <tbody>
+            {list.map((item) => (
+              <tr
+                key={item.id}
+                className={cn(
+                  'border-t border-border transition-colors',
+                  highlightedId === item.id ? 'bg-muted/70' : 'hover:bg-muted/40'
+                )}
+              >
+                <td className="py-2 pr-4 font-medium">{item.name}</td>
+                <td className="py-2 pr-4">{formatRange(item.signupStartAt, item.signupEndAt)}</td>
+                <td className="py-2 pr-4">{formatRange(item.startAt, item.endAt)}</td>
+                <td className="py-2 pr-4">{item.location ?? '-'}</td>
+                <td className="py-2 pr-4 text-right">
+                  {item.stats.participantCount} / {item.stats.teamCount}
+                </td>
+                {showActions && (
+                  <td className="py-2 pl-4 text-right">
+                    <div className="flex justify-end gap-2">
+                      {onViewDetail && (
+                        <Button variant="ghost" size="sm" onClick={() => onViewDetail(item.id)}>
+                          $([char]0x8BE6)$([char]0x60C5)
+                        </Button>
+                      )}
+                      {onOpenWizard && (
+                        <Button variant="ghost" size="sm" onClick={() => onOpenWizard(item.id)}>
+                          $([char]0x5411)$([char]0x5BFC)
+                        </Button>
+                      )}
+                    </div>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
+  const renderPagination = () => {
+    if (totalPages <= 1) return null;
+
+    return (
+      <div className="flex flex-col gap-2 pt-2 md:flex-row md:items-center md:justify-between">
+        <span className="text-sm text-muted-foreground">
+          第 {currentPage} / {totalPages} 页 · 共 {filteredCompetitions.length} 场赛事
+        </span>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+            disabled={currentPage === 1}
+          >
+            上一页
+          </Button>
+          <span className="text-sm font-medium">{currentPage}</span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+            disabled={currentPage === totalPages}
+          >
+            下一页
+          </Button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -391,26 +542,78 @@ export default function App() {
             </TabsList>
 
             <TabsContent value="competition" className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                    <div>
-                      <CardTitle>赛事列表</CardTitle>
-                      <CardDescription>点击“管理”可进入赛事详情页修改设置。</CardDescription>
+              {selectedCompetitionId ? (
+                <CompetitionDetailPanel
+                  competitionId={selectedCompetitionId}
+                  onBack={() => setSelectedCompetitionId(null)}
+                  onOpenWizard={(detail) => openEditWizard(detail.id, detail)}
+                />
+              ) : (
+                <Card>
+                  <CardHeader className="space-y-4">
+                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <CardTitle>赛事列表</CardTitle>
+                        <CardDescription>使用搜索、排序与分页快速定位需要管理的赛事。</CardDescription>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleResetFilters}
+                          disabled={filtersPristine}
+                        >
+                          重置筛选
+                        </Button>
+                        <Button onClick={openCreateWizard}>新增比赛</Button>
+                      </div>
                     </div>
-                    <Button onClick={openCreateWizard}>新增赛事</Button>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  {competitionsQuery.isLoading ? (
-                    <p className="text-sm text-muted-foreground">加载中...</p>
-                  ) : competitionData.length ? (
-                    renderCompetitionTable(competitionData)
-                  ) : (
-                    <p className="text-sm text-muted-foreground">暂无赛事记录，点击“新增赛事”开始配置。</p>
-                  )}
-                </CardContent>
-              </Card>
+                    <div className="grid gap-2 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
+                      <Input
+                        value={searchKeyword}
+                        onChange={(event) => setSearchKeyword(event.target.value)}
+                        placeholder="搜索赛事名称或地点"
+                      />
+                      <select
+                        className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                        value={sortKey}
+                        onChange={(event) => setSortKey(event.target.value as 'createdAt' | 'startAt' | 'name')}
+                      >
+                        <option value="createdAt">按创建时间</option>
+                        <option value="startAt">按比赛时间</option>
+                        <option value="name">按名称</option>
+                      </select>
+                      <select
+                        className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                        value={sortOrder}
+                        onChange={(event) => setSortOrder(event.target.value as 'asc' | 'desc')}
+                      >
+                        <option value="desc">倒序</option>
+                        <option value="asc">正序</option>
+                      </select>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {competitionsQuery.isLoading ? (
+                      <p className="text-sm text-muted-foreground">加载中...</p>
+                    ) : filteredCompetitions.length ? (
+                      <>
+                        {renderCompetitionTable(paginatedCompetitions, {
+                          showActions: true,
+                          highlightedId: selectedCompetitionId,
+                          onViewDetail: handleViewDetail,
+                          onOpenWizard: (id) => openEditWizard(id)
+                        })}
+                        {renderPagination()}
+                      </>
+                    ) : competitionData.length ? (
+                      <p className="text-sm text-muted-foreground">未找到匹配的赛事，请调整筛选条件。</p>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">暂无赛事记录，点击“新增比赛”开始配置。</p>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
 
               {wizardState.visible && (
                 wizardState.loading ? (
@@ -437,9 +640,7 @@ export default function App() {
                   />
                 )
               )}
-            </TabsContent>
-
-            <TabsContent value="account" className="space-y-6">
+            </TabsContent>            <TabsContent value="account" className="space-y-6">
               <Card>
                 <CardHeader>
                   <CardTitle>账号信息</CardTitle>
