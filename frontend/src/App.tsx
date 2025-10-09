@@ -428,7 +428,7 @@ export default function App() {
                         <>
                           {onTeamSignup && (
                             <Button variant="ghost" size="sm" onClick={() => onTeamSignup(item.id)}>
-                              去报名
+                              详情
                             </Button>
                           )}
                           {onTeamManageMembers && (
@@ -437,7 +437,7 @@ export default function App() {
                               size="sm"
                               onClick={() => onTeamManageMembers(item.id)}
                             >
-                              队员管理
+                              快速报名
                             </Button>
                           )}
                         </>

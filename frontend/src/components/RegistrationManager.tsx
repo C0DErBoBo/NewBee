@@ -1,3 +1,4 @@
+﻿import { cn } from '@/lib/utils';
 import { useEffect, useMemo, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -56,8 +57,14 @@ function statusTone(status: RegistrationStatus) {
 }
 
 function aggregateStatus(statuses: RegistrationStatus[]): RegistrationStatus | 'mixed' {
+  if (statuses.length === 0) return 'pending';
   const unique = Array.from(new Set(statuses));
-  return unique.length === 1 ? unique[0] : 'mixed';
+  if (unique.length === 1) return unique[0];
+  if (unique.includes('approved')) return 'approved';
+  if (unique.includes('pending')) return 'pending';
+  if (unique.includes('rejected') && unique.length === 1) return 'rejected';
+  if (unique.includes('cancelled') && unique.length === 1) return 'cancelled';
+  return 'mixed';
 }
 
 function aggregateStatusLabel(statuses: RegistrationStatus[]): { label: string; tone: string } {
@@ -236,45 +243,151 @@ export function RegistrationManager({
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   const registeredCompetitions = useMemo(() => {
-    if (!isTeamRole || !data) return [];
+    if (!isTeamRole || !data) return [] as Array<{
+      id: string;
+      name: string;
+      statusLabel: string;
+      statusTone: string;
+      latestSubmittedAt: string;
+      statuses: RegistrationStatus[];
+      members: Array<{
+        id: string;
+        name: string;
+        status: RegistrationStatus;
+        events: string;
+        group: string | null;
+        submittedAt: string;
+      }>;
+    }>;
+
     const map = new Map<
       string,
       {
         id: string;
         name: string;
-        status: RegistrationStatus;
-        submittedAt: string;
-        events: string;
+        statuses: RegistrationStatus[];
+        latestSubmittedAt: string;
+        members: Array<{
+          id: string;
+          name: string;
+          status: RegistrationStatus;
+          events: string;
+          group: string | null;
+          submittedAt: string;
+        }>;
       }
     >();
 
     data.registrations.forEach((registration) => {
-      const existing = map.get(registration.competitionId);
-      const eventText = formatSelections(registration.selections);
-      if (!existing) {
-        map.set(registration.competitionId, {
+      const key = registration.competitionId;
+      const group = map.get(key);
+      if (!group) {
+        map.set(key, {
           id: registration.competitionId,
           name: registration.competitionName,
-          status: registration.status,
-          submittedAt: registration.createdAt,
-          events: eventText
+          statuses: [registration.status],
+          latestSubmittedAt: registration.createdAt,
+          members: [
+            {
+              id: registration.id,
+              name: registration.participant.name,
+              status: registration.status,
+              events: formatSelections(registration.selections),
+              group:
+                registration.participant.organization ??
+                registration.participant.identityType ??
+                null,
+              submittedAt: registration.createdAt
+            }
+          ]
         });
         return;
       }
 
-      if (new Date(registration.createdAt).getTime() > new Date(existing.submittedAt).getTime()) {
-        map.set(registration.competitionId, {
-          id: registration.competitionId,
-          name: registration.competitionName,
-          status: registration.status,
-          submittedAt: registration.createdAt,
-          events: eventText
-        });
+      group.statuses.push(registration.status);
+      group.members.push({
+        id: registration.id,
+        name: registration.participant.name,
+        status: registration.status,
+        events: formatSelections(registration.selections),
+        group:
+          registration.participant.organization ??
+          registration.participant.identityType ??
+          null,
+        submittedAt: registration.createdAt
+      });
+
+      if (
+        new Date(registration.createdAt).getTime() >
+        new Date(group.latestSubmittedAt).getTime()
+      ) {
+        group.latestSubmittedAt = registration.createdAt;
       }
     });
 
-    return Array.from(map.values());
+    return Array.from(map.values())
+      .map((group) => {
+        const { label, tone } = aggregateStatusLabel(group.statuses);
+        const members = group.members
+          .sort(
+            (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
+          )
+          .map((member) => ({
+            id: member.id,
+            name: member.name,
+            status: member.status,
+            statusLabel: formatStatus(member.status),
+            statusTone: statusTone(member.status),
+            events: member.events,
+            group: member.group,
+            submittedAt: member.submittedAt
+          }));
+
+        return {
+          id: group.id,
+          name: group.name,
+          statusLabel: label,
+          statusTone: tone,
+          latestSubmittedAt: group.latestSubmittedAt,
+          statuses: group.statuses,
+          members
+        };
+      })
+      .sort(
+        (a, b) =>
+          new Date(b.latestSubmittedAt).getTime() - new Date(a.latestSubmittedAt).getTime()
+      );
   }, [data, isTeamRole]);
+
+  const [teamSelectedCompetitionId, setTeamSelectedCompetitionId] = useState<string | null>(
+    null
+  );
+
+  useEffect(() => {
+    if (!isTeamRole) {
+      setTeamSelectedCompetitionId(null);
+      return;
+    }
+    if (!registeredCompetitions.length) {
+      setTeamSelectedCompetitionId(null);
+      return;
+    }
+    if (!teamSelectedCompetitionId) {
+      setTeamSelectedCompetitionId(registeredCompetitions[0].id);
+      return;
+    }
+    if (!registeredCompetitions.some((item) => item.id === teamSelectedCompetitionId)) {
+      setTeamSelectedCompetitionId(registeredCompetitions[0].id);
+    }
+  }, [isTeamRole, registeredCompetitions, teamSelectedCompetitionId]);
+
+  const selectedTeamCompetition = useMemo(
+    () =>
+      isTeamRole
+        ? registeredCompetitions.find((item) => item.id === teamSelectedCompetitionId) ?? null
+        : null,
+    [isTeamRole, registeredCompetitions, teamSelectedCompetitionId]
+  );
 
   return (
     <Card>
@@ -297,7 +410,7 @@ export function RegistrationManager({
         </div>
 
         {isTeamRole ? (
-          <div className="space-y-3">
+          <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium">已报名赛事</h3>
               <Button
@@ -310,26 +423,72 @@ export function RegistrationManager({
               </Button>
             </div>
             {registeredCompetitions.length ? (
-              <div className="grid gap-3 md:grid-cols-2">
-                {registeredCompetitions.map((item) => (
-                  <div key={item.id} className="rounded-md border border-border p-3">
-                    <div className="flex items-start justify-between gap-2">
+              <>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {registeredCompetitions.map((item) => {
+                    const isSelected = teamSelectedCompetitionId === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => setTeamSelectedCompetitionId(item.id)}
+                        className={cn(
+                          'rounded-md border border-border p-3 text-left transition focus:outline-none focus:ring-2 focus:ring-primary/50',
+                          isSelected ? 'border-primary ring-2 ring-primary/40 bg-primary/5' : 'hover:border-primary/60'
+                        )}
+                      >
+                        <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="text-sm font-semibold">{item.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              最新报名：{formatDateTime(item.latestSubmittedAt)}
+                            </p>
+                            <p className="text-xs text-muted-foreground">队员：{item.members.length}</p>
+                          </div>
+                          <span className={`text-xs font-medium ${item.statusTone}`}>{item.statusLabel}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {selectedTeamCompetition ? (
+                  <div className="rounded-md border border-border p-4">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                       <div>
-                        <p className="text-sm font-semibold">{item.name}</p>
+                        <h4 className="text-sm font-semibold">{selectedTeamCompetition.name}</h4>
                         <p className="text-xs text-muted-foreground">
-                          报名时间：{formatDateTime(item.submittedAt)}
+                          最新报名：{formatDateTime(selectedTeamCompetition.latestSubmittedAt)}
                         </p>
                       </div>
-                      <span className={`text-xs font-medium ${statusTone(item.status)}`}>
-                        {formatStatus(item.status)}
+                      <span className={`text-xs font-medium ${selectedTeamCompetition.statusTone}`}>
+                        {selectedTeamCompetition.statusLabel}
                       </span>
                     </div>
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      项目：{item.events}
-                    </p>
+                    <ul className="mt-3 space-y-2">
+                      {selectedTeamCompetition.members.map((member) => (
+                        <li
+                          key={member.id}
+                          className="flex flex-col gap-1 rounded-md bg-muted/40 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between"
+                        >
+                          <div className="font-medium">
+                            {member.name}
+                            {member.group && (
+                              <span className="ml-2 text-xs text-muted-foreground">{member.group}</span>
+                            )}
+                          </div>
+                          <div className="text-xs text-muted-foreground sm:text-sm">
+                            项目：{member.events}
+                          </div>
+                          <span className={`text-xs font-medium ${member.statusTone}`}>
+                            {member.statusLabel}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
-                ))}
-              </div>
+                ) : null}
+              </>
             ) : (
               <p className="text-sm text-muted-foreground">暂无报名记录，请先完成报名。</p>
             )}
@@ -618,3 +777,4 @@ export function RegistrationManager({
     </Card>
   );
 }
+
