@@ -105,6 +105,32 @@ function formatDateTime(value?: string | null) {
   return date.toLocaleString();
 }
 
+function getTextLength(value?: string | null) {
+  if (!value) return 0;
+  return Array.from(value).length;
+}
+
+function getAdaptiveWidth(
+  texts: Array<string | null | undefined>,
+  {
+    min = 8,
+    max = 24,
+    padding = 2,
+    extraRem = 0
+  }: {
+    min?: number;
+    max?: number;
+    padding?: number;
+    extraRem?: number;
+  } = {}
+) {
+  const lengths = texts.map(getTextLength);
+  const contentLength = lengths.length ? Math.max(...lengths) : 0;
+  const target = Math.max(min, contentLength + padding);
+  const clampValue = `clamp(${min}ch, ${target}ch, ${max}ch)`;
+  return extraRem > 0 ? `calc(${clampValue} + ${extraRem}rem)` : clampValue;
+}
+
 export function TeamMembersManager({
   competitions,
   variant = 'page',
@@ -117,6 +143,10 @@ export function TeamMembersManager({
 }: TeamMembersManagerProps) {
   const user = useAppSelector((state) => state.auth.user);
   const isTeamRole = user?.role === 'team';
+  const basePaddingRem = 0.25;
+  const selectArrowReserveRem = 1.75;
+  const inputExtraSpaceRem = 1;
+  const selectExtraSpaceRem = selectArrowReserveRem + 0.75;
 
   if (!isTeamRole) {
     return null;
@@ -676,7 +706,7 @@ useEffect(() => {
         </div>
         <div className="flex flex-wrap gap-2">
           <select
-            className="h-9 min-w-[9rem] rounded-md border border-input bg-background px-3 pr-8 text-sm text-center"
+            className="h-9 min-w-[9rem] rounded-md border border-input bg-background px-1 text-sm text-center"
             style={{ textAlignLast: 'center' }}
             value={selectedCompetitionId ?? ''}
             onFocus={handleDropdownFocus}
@@ -760,48 +790,78 @@ useEffect(() => {
           activeDropdowns > 0 ? 'overflow-y-visible' : 'overflow-y-hidden'
         )}
       >
-        <table className="min-w-[1100px] text-sm">
+        <table className="min-w-[1100px] w-full text-sm">
           <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
             <tr>
-              <th className="px-3 py-2 text-center">姓名</th>
-              <th className="px-3 py-2 text-center">性别</th>
-              <th className="px-3 py-2 text-center">组别</th>
+              <th className="px-1 py-2 text-center">姓名</th>
+              <th className="px-1 py-2 text-center">性别</th>
+              <th className="px-1 py-2 text-center">组别</th>
               {[0, 1, 2, 3, 4].map((index) =>
                 eventVisibility[index] ? (
                   <Fragment key={`event-header-${index}`}>
-                    <th className="px-3 py-2 text-center">项目{index + 1}</th>
+                    <th className="px-1 py-2 text-center">项目{index + 1}</th>
                     {showResults && (
-                      <th className="px-3 py-2 text-center">成绩{index + 1}</th>
+                      <th className="px-1 py-2 text-center">成绩{index + 1}</th>
                     )}
                   </Fragment>
                 ) : null
               )}
-              <th className="px-3 py-2 text-center">操作</th>
-              <th className="px-3 py-2 text-center">报名时间</th>
+              <th className="px-1 py-2 text-center">操作</th>
+              <th className="px-1 py-2 text-center">报名时间</th>
             </tr>
           </thead>
           <tbody>
             {isLoading ? (
               <tr>
-                <td colSpan={16} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                <td colSpan={16} className="px-1 py-6 text-center text-sm text-muted-foreground">
                   加载中...
                 </td>
               </tr>
             ) : membersDraft.length === 0 ? (
               <tr>
-                <td colSpan={16} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                <td colSpan={16} className="px-1 py-6 text-center text-sm text-muted-foreground">
                   暂无队员数据，点击“批量添加队员”快速录入。
                 </td>
               </tr>
             ) : (
               membersDraft.map((member, memberIndex) => {
                 const groupHasError = Boolean(invalidGroups[memberIndex]);
+                const nameWidth = getAdaptiveWidth(
+                  [member.name || '', '未填写'],
+                  {
+                    min: 8,
+                    max: 24,
+                    padding: 3,
+                    extraRem: inputExtraSpaceRem
+                  }
+                );
+                const genderOptionsLabels = genders.map((gender) => gender || '未选择');
+                const genderWidth = getAdaptiveWidth(
+                  [member.gender || '未选择', '未选择', ...genderOptionsLabels],
+                  {
+                    min: 6,
+                    max: 14,
+                    padding: 2,
+                    extraRem: selectExtraSpaceRem
+                  }
+                );
+                const invalidGroupLabel =
+                  groupHasError && member.group ? `${member.group}（无效）` : member.group || null;
+                const groupWidth = getAdaptiveWidth(
+                  [
+                    member.group || '未选择',
+                    '未选择',
+                    invalidGroupLabel ?? member.group ?? null,
+                    ...groupOptions.map((group) => group?.name ?? '')
+                  ],
+                  { min: 10, max: 30, padding: 4, extraRem: selectExtraSpaceRem }
+                );
                 const groupSelectClass = cn(
-                  'h-9 w-full min-w-[12rem] rounded-md border border-input bg-background px-3 pr-8 text-sm text-center',
+                  'h-9 w-auto rounded-md border border-input bg-background text-sm text-center',
                   groupHasError ? 'border-destructive text-destructive focus-visible:ring-destructive/40' : ''
                 );
                 const genderSelectClass =
-                  'h-9 w-full min-w-[8rem] rounded-md border border-input bg-background px-3 pr-8 text-sm text-center';
+                  'h-9 w-auto rounded-md border border-input bg-background text-sm text-center';
                 const hasSelectedEvents = Boolean(member.events?.some((event) => event?.name));
                 const isRegistered = Boolean(member.registered);
                 const rowTone = isRegistered
@@ -827,6 +887,10 @@ useEffect(() => {
                       )
                       .join('\n')
                   : '暂无历史记录';
+                const timeWidth = getAdaptiveWidth(
+                  [latestHistory?.formattedTime ?? '—', '0000-00-00 00:00'],
+                  { min: 10, max: 24, padding: 2 }
+                );
                 return (
                   <tr
                     key={`member-${memberIndex}`}
@@ -835,18 +899,28 @@ useEffect(() => {
                       rowTone
                     )}
                   >
-                    <td className="px-3 py-3 text-center">
+                    <td className="px-1 py-3 text-center">
                       <Input
                         value={member.name}
                         onChange={(event) => handleMemberNameChange(memberIndex, event.target.value)}
                         placeholder="请输入姓名"
-                        className="h-9 min-w-[10rem] text-center"
+                        className="h-9 w-auto text-center"
+                        style={{
+                          width: nameWidth,
+                          paddingLeft: `${basePaddingRem}rem`,
+                          paddingRight: `${basePaddingRem}rem`
+                        }}
                       />
                     </td>
-                    <td className="px-3 py-3 text-center">
+                    <td className="px-1 py-3 text-center">
                       <select
                         className={genderSelectClass}
-                        style={{ textAlignLast: 'center' }}
+                        style={{
+                          textAlignLast: 'center',
+                          width: genderWidth,
+                          paddingLeft: `${basePaddingRem}rem`,
+                          paddingRight: `${basePaddingRem}rem`
+                        }}
                         value={member.gender ?? ''}
                         onFocus={handleDropdownFocus}
                         onBlur={handleDropdownBlur}
@@ -859,10 +933,15 @@ useEffect(() => {
                         ))}
                       </select>
                     </td>
-                    <td className="px-3 py-3 text-center">
+                    <td className="px-1 py-3 text-center">
                       <select
                         className={groupSelectClass}
-                        style={{ textAlignLast: 'center' }}
+                        style={{
+                          textAlignLast: 'center',
+                          width: groupWidth,
+                          paddingLeft: `${basePaddingRem}rem`,
+                          paddingRight: `${basePaddingRem}rem`
+                        }}
                         value={member.group ?? ''}
                         onFocus={handleDropdownFocus}
                         onBlur={handleDropdownBlur}
@@ -907,17 +986,35 @@ useEffect(() => {
                         }
                         return true;
                       });
+                      const eventNameWidth = getAdaptiveWidth(
+                        [
+                          event.name || '未选择',
+                          '未选择',
+                          eventHasError && currentEventName ? `${currentEventName}（无效）` : null,
+                          ...filteredEventOptions.map((option) => option?.name ?? '')
+                        ],
+                        { min: 10, max: 30, padding: 4, extraRem: selectExtraSpaceRem }
+                      );
                       const eventSelectClass = cn(
-                        'h-9 w-full min-w-[12rem] rounded-md border border-input bg-background px-3 pr-8 text-sm text-center',
+                        'h-9 w-auto rounded-md border border-input bg-background text-sm text-center',
                         eventHasError ? 'border-destructive text-destructive focus-visible:ring-destructive/40' : ''
+                      );
+                      const resultWidth = getAdaptiveWidth(
+                        [event.result || '', '成绩', '00:00.00'],
+                        { min: 8, max: 20, padding: 3, extraRem: inputExtraSpaceRem }
                       );
                       return (
                         <Fragment key={`event-${memberIndex}-${eventIndex}`}>
-                          <td className="px-3 py-3 text-center">
+                          <td className="px-1 py-3 text-center">
                             {canEditEvent ? (
                               <select
                                 className={eventSelectClass}
-                                style={{ textAlignLast: 'center' }}
+                                style={{
+                                  textAlignLast: 'center',
+                                  width: eventNameWidth,
+                                  paddingLeft: `${basePaddingRem}rem`,
+                                  paddingRight: `${basePaddingRem}rem`
+                                }}
                                 value={event.name ?? ''}
                                 onFocus={handleDropdownFocus}
                                 onBlur={handleDropdownBlur}
@@ -944,13 +1041,20 @@ useEffect(() => {
                                 ))}
                               </select>
                             ) : (
-                              <div className="flex h-9 min-w-[12rem] items-center justify-center rounded-md border border-dashed border-border/60 bg-muted/30 px-3 text-sm text-muted-foreground">
+                              <div
+                                className="flex h-9 items-center justify-center rounded-md border border-dashed border-border/60 bg-muted/30 text-sm text-muted-foreground"
+                                style={{
+                                  width: eventNameWidth,
+                                  paddingLeft: `${basePaddingRem}rem`,
+                                  paddingRight: `${basePaddingRem}rem`
+                                }}
+                              >
                                 —
                               </div>
                             )}
                           </td>
                           {showResults && (
-                            <td className="px-3 py-3 text-center">
+                            <td className="px-1 py-3 text-center">
                               {canEditEvent && event.name ? (
                                 <Input
                                   value={event.result ?? ''}
@@ -958,10 +1062,22 @@ useEffect(() => {
                                     handleEventChange(memberIndex, eventIndex, 'result', eventChange.target.value)
                                   }
                                   placeholder="成绩"
-                                  className="h-9 min-w-[8rem] text-center"
+                                  className="h-9 w-auto text-center"
+                                  style={{
+                                    width: resultWidth,
+                                    paddingLeft: `${basePaddingRem}rem`,
+                                    paddingRight: `${basePaddingRem}rem`
+                                  }}
                                 />
                               ) : (
-                                <div className="flex h-9 min-w-[8rem] items-center justify-center rounded-md border border-dashed border-border/60 bg-muted/30 px-3 text-sm text-muted-foreground">
+                                <div
+                                  className="flex h-9 items-center justify-center rounded-md border border-dashed border-border/60 bg-muted/30 text-sm text-muted-foreground"
+                                  style={{
+                                    width: resultWidth,
+                                    paddingLeft: `${basePaddingRem}rem`,
+                                    paddingRight: `${basePaddingRem}rem`
+                                  }}
+                                >
                                   —
                                 </div>
                               )}
@@ -970,7 +1086,7 @@ useEffect(() => {
                         </Fragment>
                       );
                     })}
-                    <td className="px-3 py-3 text-center">
+                    <td className="px-1 py-3 text-center">
                       <div className="flex items-center justify-center gap-2">
                         <Button
                           variant="outline"
@@ -1007,9 +1123,10 @@ useEffect(() => {
                         </Button>
                       </div>
                     </td>
-                    <td className="px-3 py-3 text-center">
+                    <td className="px-1 py-3 text-center">
                       <span
-                        className="inline-flex min-w-[10rem] items-center justify-center rounded-md border border-border/60 bg-muted/20 px-2 py-1 text-xs font-medium text-foreground"
+                        className="inline-flex items-center justify-center rounded-md border border-border/60 bg-muted/20 px-2 py-1 text-xs font-medium text-foreground"
+                        style={{ width: timeWidth }}
                         title={historyTooltip}
                       >
                         {latestHistory ? latestHistory.formattedTime : '—'}
@@ -1022,59 +1139,6 @@ useEffect(() => {
           </tbody>
         </table>
       </div>
-
-      {selectedCompetitionId && (
-        <div className="space-y-3 rounded-md border border-border bg-muted/30 p-4">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <h4 className="text-sm font-semibold">当前赛事报名汇总</h4>
-              <p className="text-xs text-muted-foreground">{summaryData.title}</p>
-            </div>
-            <div className="flex flex-col items-end gap-1 text-right">
-              <span className={`text-xs font-medium ${summaryData.statusTone}`}>
-                {summaryData.statusLabel}
-              </span>
-              <span className="text-xs text-muted-foreground">
-                共 {summaryData.entries.length} 名队员
-              </span>
-            </div>
-          </div>
-          {summaryData.entries.length ? (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead className="bg-muted/60 text-left text-xs uppercase text-muted-foreground">
-                  <tr>
-                    <th className="px-3 py-2">队员</th>
-                    <th className="px-3 py-2">组别</th>
-                    <th className="px-3 py-2">性别</th>
-                    <th className="px-3 py-2">项目 & 成绩</th>
-                    <th className="px-3 py-2 text-right">状态</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {summaryData.entries.map((entry) => (
-                    <tr key={entry.id} className="border-t border-border">
-                      <td className="px-3 py-2 font-medium">{entry.name}</td>
-                      <td className="px-3 py-2">{entry.group ?? '—'}</td>
-                      <td className="px-3 py-2">{entry.gender ?? '—'}</td>
-                      <td className="px-3 py-2 text-xs text-muted-foreground">{entry.events}</td>
-                      <td className="px-3 py-2 text-right">
-                        <span className={`text-xs font-medium ${entry.statusTone ?? 'text-muted-foreground'}`}>
-                          {entry.statusLabel ?? '—'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              当前赛事暂未匹配到报名数据，请在报名管理中完成队员报名后再查看。
-            </p>
-          )}
-        </div>
-      )}
 
       {saveError && <p className="text-xs text-destructive text-right">{saveError}</p>}
 

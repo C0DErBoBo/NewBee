@@ -1,6 +1,6 @@
 ﻿import { cn } from '@/lib/utils';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, X } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -123,6 +123,18 @@ export function RegistrationManager({
   const [statusFilter, setStatusFilter] = useState<RegistrationStatus | ''>('');
   const [competitionFilter, setCompetitionFilter] = useState<string | ''>('');
   const [page, setPage] = useState(1);
+  const [detailsModalOpen, setDetailsModalOpen] = useState(false);
+  const [detailsCompetition, setDetailsCompetition] = useState<TeamCompetitionOverview | null>(null);
+
+  const openDetailsModal = (competition: TeamCompetitionOverview) => {
+    setDetailsCompetition(competition);
+    setDetailsModalOpen(true);
+  };
+
+  const closeDetailsModal = () => {
+    setDetailsModalOpen(false);
+    setDetailsCompetition(null);
+  };
 
   useEffect(() => {
     if (!externalCompetitionId) return;
@@ -445,8 +457,233 @@ const selectedTeamCompetition = useMemo(
     [isTeamRole, currentCompetitionOverview]
   );
 
+  const renderCompetitionSummaryCard = (competition: TeamCompetitionOverview | null) => {
+    if (!competition) {
+      return <p className="text-sm text-muted-foreground">暂未选择赛事。</p>;
+    }
+
+    return (
+      <div className="space-y-3">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h4 className="text-sm font-semibold">{competition.name}</h4>
+            <p className="text-xs text-muted-foreground">
+              最新报名：{formatDateTime(competition.latestSubmittedAt)}
+            </p>
+          </div>
+          <span className={`text-xs font-medium ${competition.statusTone}`}>{competition.statusLabel}</span>
+        </div>
+        <div className="overflow-x-auto rounded-md border border-border">
+          <table className="min-w-full text-sm">
+            <thead className="bg-muted/60 text-left text-xs uppercase text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2">队员</th>
+                <th className="px-3 py-2">组别</th>
+                <th className="px-3 py-2">项目 & 成绩</th>
+                <th className="px-3 py-2 text-right">状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              {competition.members.length ? (
+                competition.members.map((member) => (
+                  <tr key={member.id} className="border-t border-border">
+                    <td className="px-3 py-2 font-medium">{member.name}</td>
+                    <td className="px-3 py-2">{member.group ?? '—'}</td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">{member.events || '—'}</td>
+                    <td className="px-3 py-2 text-right">
+                      <span className={`text-xs font-medium ${member.statusTone}`}>{member.statusLabel}</span>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={4} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                    暂无报名队员。
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+  const renderRegistrationTable = (competitionId?: string | null) => {
+    const registrations = data?.registrations ?? [];
+    const filtered = competitionId
+      ? registrations.filter((registration) => registration.competitionId === competitionId)
+      : registrations;
+    const hasData = filtered.length > 0;
+
+    return (
+      <>
+        <div className="rounded-md border border-border">
+          <table className="min-w-full text-sm">
+            <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2">报名人</th>
+                <th className="px-3 py-2">赛事</th>
+                <th className="px-3 py-2">项目</th>
+                <th className="px-3 py-2">联系方式</th>
+                <th className="px-3 py-2">状态</th>
+                <th className="px-3 py-2">备注</th>
+                <th className="px-3 py-2 text-right">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {isLoading ? (
+                <tr>
+                  <td colSpan={7} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                    加载中...
+                  </td>
+                </tr>
+              ) : !hasData ? (
+                <tr>
+                  <td colSpan={7} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                    暂无报名记录。
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((registration) => (
+                  <tr key={registration.id} className="border-t border-border">
+                    <td className="px-3 py-3">
+                      <div className="font-medium">{registration.participant.name}</div>
+                      {registration.team ? (
+                        <div className="text-xs text-muted-foreground">
+                          团队：{registration.team.name ?? '未命名团队'}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-muted-foreground">个人报名</div>
+                      )}
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="font-medium">{registration.competitionName}</div>
+                      <div className="text-xs text-muted-foreground">
+                        提交于 {formatDateTime(registration.createdAt)}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 text-xs text-muted-foreground">
+                      {formatSelections(registration.selections)}
+                    </td>
+                    <td className="px-3 py-3">
+                      <div>{registration.participant.contact ?? '-'}</div>
+                      {registration.participant.organization && (
+                        <div className="text-xs text-muted-foreground">
+                          单位：{registration.participant.organization}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-3 py-3">
+                      <span className={`text-xs font-medium ${statusTone(registration.status)}`}>
+                        {formatStatus(registration.status)}
+                      </span>
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="text-xs text-muted-foreground">
+                        {registration.remark ?? '—'}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 text-right">
+                      <div className="flex justify-end gap-2">
+                        {canManageApproval && registration.status === 'pending' && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() =>
+                                approveMutation.mutate({
+                                  id: registration.id,
+                                  status: 'approved'
+                                })
+                              }
+                              disabled={approveMutation.isPending || isFetching}
+                            >
+                              通过
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() =>
+                                approveMutation.mutate({
+                                  id: registration.id,
+                                  status: 'rejected'
+                                })
+                              }
+                              disabled={approveMutation.isPending || isFetching}
+                            >
+                              驳回
+                            </Button>
+                          </>
+                        )}
+                        {canManageApproval && registration.status !== 'cancelled' && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              const remark = window.prompt('填写备注或说明', registration.remark ?? '');
+                              if (remark !== null) {
+                                remarkMutation.mutate({ id: registration.id, remark });
+                              }
+                            }}
+                            disabled={remarkMutation.isPending}
+                          >
+                            修改备注
+                          </Button>
+                        )}
+                        {canCancel && registration.status !== 'cancelled' && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-destructive"
+                            onClick={() => cancelMutation.mutate(registration.id)}
+                            disabled={cancelMutation.isPending}
+                          >
+                            撤销
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        {!competitionId && totalPages > 1 && (
+          <div className="flex items-center justify-between pt-2 text-sm">
+            <span className="text-muted-foreground">
+              第 {page} / {totalPages} 页，共 {total} 条记录
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                disabled={page === 1}
+              >
+                上一页
+              </Button>
+              <span className="text-sm font-medium">{page}</span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+                disabled={page === totalPages}
+              >
+                下一页
+              </Button>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  };
+
+
   return (
-    <Card>
+    <>
+      <Card>
       <CardHeader>
         <CardTitle>报名管理</CardTitle>
         <CardDescription>
@@ -484,12 +721,19 @@ const selectedTeamCompetition = useMemo(
                   {registeredCompetitions.map((item) => {
                     const isSelected = teamInternalCompetitionId === item.id;
                     return (
-                      <button
+                      <div
                         key={item.id}
-                        type="button"
+                        role="button"
+                        tabIndex={0}
                         onClick={() => handleTeamCompetitionSelect(item.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            handleTeamCompetitionSelect(item.id);
+                          }
+                        }}
                         className={cn(
-                          'rounded-md border border-border p-3 text-left transition focus:outline-none focus:ring-2 focus:ring-primary/50',
+                          'cursor-pointer rounded-md border border-border p-3 text-left transition focus:outline-none focus:ring-2 focus:ring-primary/50',
                           isSelected ? 'border-primary ring-2 ring-primary/40 bg-primary/5' : 'hover:border-primary/60'
                         )}
                       >
@@ -501,49 +745,25 @@ const selectedTeamCompetition = useMemo(
                             </p>
                             <p className="text-xs text-muted-foreground">队员：{item.members.length}</p>
                           </div>
-                          <span className={`text-xs font-medium ${item.statusTone}`}>{item.statusLabel}</span>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs font-medium ${item.statusTone}`}>{item.statusLabel}</span>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openDetailsModal(item);
+                              }}
+                            >
+                              详情
+                            </Button>
+                          </div>
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
 
-                {selectedTeamCompetition ? (
-                  <div className="rounded-md border border-border p-4">
-                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <h4 className="text-sm font-semibold">{selectedTeamCompetition.name}</h4>
-                        <p className="text-xs text-muted-foreground">
-                          最新报名：{formatDateTime(selectedTeamCompetition.latestSubmittedAt)}
-                        </p>
-                      </div>
-                      <span className={`text-xs font-medium ${selectedTeamCompetition.statusTone}`}>
-                        {selectedTeamCompetition.statusLabel}
-                      </span>
-                    </div>
-                    <ul className="mt-3 space-y-2">
-                      {selectedTeamCompetition.members.map((member) => (
-                        <li
-                          key={member.id}
-                          className="flex flex-col gap-1 rounded-md bg-muted/40 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between"
-                        >
-                          <div className="font-medium">
-                            {member.name}
-                            {member.group && (
-                              <span className="ml-2 text-xs text-muted-foreground">{member.group}</span>
-                            )}
-                          </div>
-                          <div className="text-xs text-muted-foreground sm:text-sm">
-                            项目：{member.events}
-                          </div>
-                          <span className={`text-xs font-medium ${member.statusTone}`}>
-                            {member.statusLabel}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
               </>
             ) : (
               <p className="text-sm text-muted-foreground">暂无报名记录，请先完成报名。</p>
@@ -670,139 +890,6 @@ const selectedTeamCompetition = useMemo(
           </div>
         )}
 
-        <div className="rounded-md border border-border">
-          <table className="min-w-full text-sm">
-            <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2">报名人</th>
-                <th className="px-3 py-2">赛事</th>
-                <th className="px-3 py-2">项目</th>
-                <th className="px-3 py-2">联系方式</th>
-                <th className="px-3 py-2">状态</th>
-                <th className="px-3 py-2">备注</th>
-                <th className="px-3 py-2 text-right">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {isLoading ? (
-                <tr>
-                  <td colSpan={7} className="px-3 py-6 text-center text-sm text-muted-foreground">
-                    加载中...
-                  </td>
-                </tr>
-              ) : !data || data.registrations.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="px-3 py-6 text-center text-sm text-muted-foreground">
-                    暂无报名记录。
-                  </td>
-                </tr>
-              ) : (
-                data.registrations.map((registration) => (
-                  <tr key={registration.id} className="border-t border-border">
-                    <td className="px-3 py-3">
-                      <div className="font-medium">{registration.participant.name}</div>
-                      {registration.team ? (
-                        <div className="text-xs text-muted-foreground">
-                          团队：{registration.team.name ?? '未命名团队'}
-                        </div>
-                      ) : (
-                        <div className="text-xs text-muted-foreground">个人报名</div>
-                      )}
-                    </td>
-                    <td className="px-3 py-3">
-                      <div className="font-medium">{registration.competitionName}</div>
-                      <div className="text-xs text-muted-foreground">
-                        提交于 {formatDateTime(registration.createdAt)}
-                      </div>
-                    </td>
-                    <td className="px-3 py-3 text-xs text-muted-foreground">
-                      {formatSelections(registration.selections)}
-                    </td>
-                    <td className="px-3 py-3">
-                      <div>{registration.participant.contact ?? '-'}</div>
-                      {registration.participant.organization && (
-                        <div className="text-xs text-muted-foreground">
-                          单位：{registration.participant.organization}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-3 py-3">
-                      <span className={`text-xs font-medium ${statusTone(registration.status)}`}>
-                        {formatStatus(registration.status)}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3">
-                      <div className="text-xs text-muted-foreground">
-                        {registration.remark ?? '—'}
-                      </div>
-                    </td>
-                    <td className="px-3 py-3 text-right">
-                      <div className="flex justify-end gap-2">
-                        {canManageApproval && registration.status === 'pending' && (
-                          <>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() =>
-                                approveMutation.mutate({
-                                  id: registration.id,
-                                  status: 'approved'
-                                })
-                              }
-                              disabled={approveMutation.isPending || isFetching}
-                            >
-                              通过
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() =>
-                                approveMutation.mutate({
-                                  id: registration.id,
-                                  status: 'rejected'
-                                })
-                              }
-                              disabled={approveMutation.isPending || isFetching}
-                            >
-                              驳回
-                            </Button>
-                          </>
-                        )}
-                        {canManageApproval && registration.status !== 'cancelled' && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              const remark = window.prompt('填写备注或说明', registration.remark ?? '');
-                              if (remark !== null) {
-                                remarkMutation.mutate({ id: registration.id, remark });
-                              }
-                            }}
-                            disabled={remarkMutation.isPending}
-                          >
-                            修改备注
-                          </Button>
-                        )}
-                        {canCancel && registration.status !== 'cancelled' && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-destructive"
-                            onClick={() => cancelMutation.mutate(registration.id)}
-                            disabled={cancelMutation.isPending}
-                          >
-                            撤销
-                          </Button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
         {totalPages > 1 && (
           <div className="flex items-center justify-between pt-2 text-sm">
             <span className="text-muted-foreground">
@@ -831,6 +918,44 @@ const selectedTeamCompetition = useMemo(
         )}
       </CardContent>
     </Card>
+      {detailsModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur"
+          onClick={closeDetailsModal}
+        >
+          <div
+            className="w-full max-w-6xl space-y-6 rounded-lg border border-border bg-card p-6 shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold">赛事报名详情</h3>
+                <p className="text-xs text-muted-foreground">
+                  {detailsCompetition
+                    ? `${detailsCompetition.name} · 最新报名：${formatDateTime(
+                        detailsCompetition.latestSubmittedAt
+                      )}`
+                    : '未选择赛事'}
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="text-muted-foreground hover:text-foreground"
+                onClick={closeDetailsModal}
+                aria-label="关闭"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="space-y-6 overflow-y-auto max-h-[75vh] pr-1">
+              {renderCompetitionSummaryCard(detailsCompetition)}
+              {renderRegistrationTable(detailsCompetition?.id ?? null)}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
