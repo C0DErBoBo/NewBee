@@ -29,6 +29,7 @@ import {
 import { fetchAccounts, updateAccountRole, AccountSummary } from './services/admin';
 import { CompetitionWizard } from './components/CompetitionWizard';
 import { RegistrationManager } from './components/RegistrationManager';
+import type { TeamCompetitionOverview } from './components/RegistrationManager';
 import { TeamMembersManager } from './components/TeamMembersManager';
 import { CompetitionDetailPanel } from './components/competition/CompetitionDetailPanel';
 import { cn } from './lib/utils';
@@ -87,6 +88,9 @@ export default function App() {
   const [teamCurrentCompetitionId, setTeamCurrentCompetitionId] = useState<string | null>(
     null
   );
+  const [teamCurrentCompetitionOverview, setTeamCurrentCompetitionOverview] =
+    useState<TeamCompetitionOverview | null>(null);
+
   const pageSize = 6;
   const toastAutoDismissRef = useRef<number | null>(null);
   const toastRemoveRef = useRef<number | null>(null);
@@ -221,9 +225,13 @@ export default function App() {
     }
   }, [user]);
 
-  const handleTeamCompetitionChange = useCallback((competitionId: string | null) => {
-    setTeamCurrentCompetitionId(competitionId);
-  }, []);
+  const handleTeamCompetitionChange = useCallback(
+    (competitionId: string | null, overview: TeamCompetitionOverview | null) => {
+      setTeamCurrentCompetitionId(competitionId);
+      setTeamCurrentCompetitionOverview(overview ?? null);
+    },
+    []
+  );
 
   useEffect(() => {
     if (!toast) return;
@@ -781,6 +789,7 @@ export default function App() {
                 <TeamMembersManager
                   competitions={competitionData}
                   highlightedCompetitionId={teamCurrentCompetitionId}
+                  selectedCompetitionOverview={teamCurrentCompetitionOverview}
                   onCompetitionChange={handleTeamCompetitionChange}
                 />
               )}
@@ -935,5 +944,10 @@ function formatRange(start?: string, end?: string) {
   const endText = end ? new Date(end).toLocaleString() : '待定';
   return `${startText} ~ ${endText}`;
 }
+
+
+
+
+
 
 

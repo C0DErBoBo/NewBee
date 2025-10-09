@@ -2,6 +2,7 @@
 import { Loader2, Plus, X } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import type { TeamCompetitionOverview } from './RegistrationManager';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
 import { Input } from './ui/input';
@@ -27,7 +28,8 @@ interface TeamMembersManagerProps {
   onClose?: () => void;
   initialCompetitionId?: string | null;
   highlightedCompetitionId?: string | null;
-  onCompetitionChange?: (competitionId: string | null) => void;
+  selectedCompetitionOverview?: TeamCompetitionOverview | null;
+  onCompetitionChange?: (competitionId: string | null, overview?: TeamCompetitionOverview | null) => void;
 }
 
 function cleanEvents(events: TeamMemberEvent[] = []): TeamMemberEvent[] {
@@ -94,6 +96,7 @@ export function TeamMembersManager({
   onClose,
   initialCompetitionId,
   highlightedCompetitionId,
+  selectedCompetitionOverview,
   onCompetitionChange
 }: TeamMembersManagerProps) {
   const user = useAppSelector((state) => state.auth.user);
@@ -158,11 +161,6 @@ useEffect(() => {
   }
 }, [highlightedCompetitionId, isVisible, selectedCompetitionId]);
 
-useEffect(() => {
-  if (!isVisible) return;
-  onCompetitionChange?.(selectedCompetitionId ?? null);
-}, [selectedCompetitionId, isVisible, onCompetitionChange]);
-
   const competitionDetailQuery = useQuery<CompetitionDetail | undefined>({
     queryKey: ['team-members-competition-detail', selectedCompetitionId],
     queryFn: async () => {
@@ -206,7 +204,63 @@ useEffect(() => {
       .filter((entry) => entry.events.length > 0);
   }, [membersDraft, selectedCompetitionId, competitionDetailQuery.data]);
 
-  const updateMutation = useMutation({
+  const summaryData = useMemo(() => {
+    if (selectedCompetitionOverview) {
+      const draftMap = new Map(membersDraft.map((member) => [member.name, member]));
+      return {
+        title: selectedCompetitionOverview.name,
+        statusLabel: selectedCompetitionOverview.statusLabel,
+        statusTone: selectedCompetitionOverview.statusTone,
+        entries: selectedCompetitionOverview.members.map((member) => {
+          const draft = draftMap.get(member.name);
+          return {
+            id: member.id,
+            name: member.name,
+            group: member.group ?? draft?.group ?? null,
+            gender: draft?.gender ?? null,
+            events: member.events,
+            statusLabel: member.statusLabel,
+            statusTone: member.statusTone
+          };
+        })
+      };
+    }
+
+    const entries = currentCompetitionSummary.map((entry) => ({
+      id: entry.name,
+      name: entry.name,
+      group: entry.group,
+      gender: entry.gender,
+      events:
+        entry.events
+          .map((event) =>
+            event.result && event.result.trim()
+              ? `${event.name ?? '—'}（${event.result}）`
+              : event.name ?? '—'
+          )
+          .filter(Boolean)
+          .join('，') || '—',
+      statusLabel: '—',
+      statusTone: 'text-muted-foreground'
+    }));
+
+    const title =
+      competitionOptions.find((item) => item.id === selectedCompetitionId)?.name ?? '当前赛事';
+
+    return {
+      title,
+      statusLabel: '—',
+      statusTone: 'text-muted-foreground',
+      entries
+    };
+  }, [
+    selectedCompetitionOverview,
+    membersDraft,
+    currentCompetitionSummary,
+    competitionOptions,
+    selectedCompetitionId
+  ]);
+const updateMutation = useMutation({
     mutationFn: ({ members, competitionId }: { members: TeamMember[]; competitionId: string }) =>
       updateTeamMembers(members, competitionId),
     onSuccess: (data) => {
@@ -345,7 +399,7 @@ useEffect(() => {
             onChange={(event) => {
               const value = event.target.value || null;
               setSelectedCompetitionId(value);
-              onCompetitionChange?.(value);
+              onCompetitionChange?.(value, null);
             }}
           >
             {!selectedCompetitionId && <option value="">选择赛事</option>}
@@ -461,7 +515,7 @@ useEffect(() => {
                       ))}
                     </select>
                   </td>
-                  <td className="px-3 py-3">
+                  <td className="px-3 py-3 overflow-visible">
                     <select
                       className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
                       value={member.group ?? ''}
@@ -478,12 +532,15 @@ useEffect(() => {
                   {[0, 1, 2, 3, 4].map((eventIndex) => {
                     const event = member.events?.[eventIndex] ?? { name: null, result: null };
                     return (
-                      <td key={`event-name-${memberIndex}-${eventIndex}`} className="px-3 py-3">
-                        <select
-                          className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
-                          value={event.name ?? ''}
-                          onChange={(eventChange) =>
-                            handleEventChange(memberIndex, eventIndex, 'name', eventChange.target.value)
+                    <td
+                      key={`event-name-${memberIndex}-${eventIndex}`}
+                      className="px-3 py-3 overflow-visible"
+                    >
+                      <select
+                        className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                        value={event.name ?? ''}
+                        onChange={(eventChange) =>
+                          handleEventChange(memberIndex, eventIndex, 'name', eventChange.target.value)
                           }
                         >
                           <option value="">未选择</option>
@@ -531,13 +588,21 @@ useEffect(() => {
 
       {selectedCompetitionId && (
         <div className="space-y-3 rounded-md border border-border bg-muted/30 p-4">
-          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-            <h4 className="text-sm font-semibold">当前赛事报名汇总</h4>
-            <span className="text-xs text-muted-foreground">
-              共 {currentCompetitionSummary.length} 名队员
-            </span>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h4 className="text-sm font-semibold">当前赛事报名汇总</h4>
+              <p className="text-xs text-muted-foreground">{summaryData.title}</p>
+            </div>
+            <div className="flex flex-col items-end gap-1 text-right">
+              <span className={`text-xs font-medium ${summaryData.statusTone}`}>
+                {summaryData.statusLabel}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                共 {summaryData.entries.length} 名队员
+              </span>
+            </div>
           </div>
-          {currentCompetitionSummary.length ? (
+          {summaryData.entries.length ? (
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead className="bg-muted/60 text-left text-xs uppercase text-muted-foreground">
@@ -546,20 +611,20 @@ useEffect(() => {
                     <th className="px-3 py-2">组别</th>
                     <th className="px-3 py-2">性别</th>
                     <th className="px-3 py-2">项目 & 成绩</th>
+                    <th className="px-3 py-2 text-right">状态</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {currentCompetitionSummary.map((entry) => (
-                    <tr key={entry.name} className="border-t border-border">
+                  {summaryData.entries.map((entry) => (
+                    <tr key={entry.id} className="border-t border-border">
                       <td className="px-3 py-2 font-medium">{entry.name}</td>
                       <td className="px-3 py-2">{entry.group ?? '—'}</td>
                       <td className="px-3 py-2">{entry.gender ?? '—'}</td>
-                      <td className="px-3 py-2 text-xs text-muted-foreground">
-                        {entry.events
-                          .map((event) =>
-                            event.result ? `${event.name}（${event.result}）` : event.name
-                          )
-                          .join('，')}
+                      <td className="px-3 py-2 text-xs text-muted-foreground">{entry.events}</td>
+                      <td className="px-3 py-2 text-right">
+                        <span className={`text-xs font-medium ${entry.statusTone ?? 'text-muted-foreground'}`}>
+                          {entry.statusLabel ?? '—'}
+                        </span>
                       </td>
                     </tr>
                   ))}
@@ -568,7 +633,7 @@ useEffect(() => {
             </div>
           ) : (
             <p className="text-xs text-muted-foreground">
-              当前赛事暂未为任一队员配置项目，请在上方表格中为队员选择本赛事项目后保存。
+              当前赛事暂未匹配到报名数据，请在报名管理中完成队员报名后再查看。
             </p>
           )}
         </div>
@@ -641,5 +706,15 @@ useEffect(() => {
     </Card>
   );
 }
+
+
+
+
+
+
+
+
+
+
 
 

@@ -1,5 +1,5 @@
 ﻿import { cn } from '@/lib/utils';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from './ui/button';
@@ -14,12 +14,31 @@ import {
 import { CompetitionSummary } from '@/services/competitions';
 import { useAppSelector } from '@/store';
 
+export interface TeamCompetitionOverview {
+  id: string;
+  name: string;
+  statusLabel: string;
+  statusTone: string;
+  latestSubmittedAt: string;
+  statuses: RegistrationStatus[];
+  members: Array<{
+    id: string;
+    name: string;
+    status: RegistrationStatus;
+    statusLabel: string;
+    statusTone: string;
+    events: string;
+    group: string | null;
+    submittedAt: string;
+  }>;
+}
+
 interface RegistrationManagerProps {
   competitions: CompetitionSummary[];
   externalCompetitionId?: string | null;
   onExternalCompetitionConsumed?: () => void;
   teamSelectedCompetitionId?: string | null;
-  onTeamCompetitionChange?: (competitionId: string | null) => void;
+  onTeamCompetitionChange?: (competitionId: string | null, overview: TeamCompetitionOverview | null) => void;
 }
 
 const statusOptions: Array<{ label: string; value: RegistrationStatus | '' }> = [
@@ -246,24 +265,8 @@ export function RegistrationManager({
   const total = data?.pagination.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-  const registeredCompetitions = useMemo(() => {
-    if (!isTeamRole || !data) return [] as Array<{
-      id: string;
-      name: string;
-      statusLabel: string;
-      statusTone: string;
-      latestSubmittedAt: string;
-      statuses: RegistrationStatus[];
-      members: Array<{
-        id: string;
-        name: string;
-        status: RegistrationStatus;
-        events: string;
-        group: string | null;
-        submittedAt: string;
-      }>;
-    }>;
-
+    const registeredCompetitions = useMemo<TeamCompetitionOverview[]>(() => {
+    if (!isTeamRole || !data) return [];
     const map = new Map<
       string,
       {
@@ -283,33 +286,24 @@ export function RegistrationManager({
     >();
 
     data.registrations.forEach((registration) => {
-      const key = registration.competitionId;
-      const group = map.get(key);
-      if (!group) {
-        map.set(key, {
-          id: registration.competitionId,
-          name: registration.competitionName,
-          statuses: [registration.status],
-          latestSubmittedAt: registration.createdAt,
-          members: [
-            {
-              id: registration.id,
-              name: registration.participant.name,
-              status: registration.status,
-              events: formatSelections(registration.selections),
-              group:
-                registration.participant.organization ??
-                registration.participant.identityType ??
-                null,
-              submittedAt: registration.createdAt
-            }
-          ]
-        });
+      if (statusFilter && registration.status !== statusFilter) {
         return;
       }
+      const competitionId = registration.competitionId;
+      let record = map.get(competitionId);
+      if (!record) {
+        record = {
+          id: competitionId,
+          name: registration.competitionName,
+          statuses: [],
+          latestSubmittedAt: registration.createdAt,
+          members: []
+        };
+        map.set(competitionId, record);
+      }
 
-      group.statuses.push(registration.status);
-      group.members.push({
+      record.statuses.push(registration.status);
+      record.members.push({
         id: registration.id,
         name: registration.participant.name,
         status: registration.status,
@@ -321,18 +315,15 @@ export function RegistrationManager({
         submittedAt: registration.createdAt
       });
 
-      if (
-        new Date(registration.createdAt).getTime() >
-        new Date(group.latestSubmittedAt).getTime()
-      ) {
-        group.latestSubmittedAt = registration.createdAt;
+      if (new Date(registration.createdAt).getTime() > new Date(record.latestSubmittedAt).getTime()) {
+        record.latestSubmittedAt = registration.createdAt;
       }
     });
 
     return Array.from(map.values())
-      .map((group) => {
-        const { label, tone } = aggregateStatusLabel(group.statuses);
-        const members = group.members
+      .map((record) => {
+        const { label, tone } = aggregateStatusLabel(record.statuses);
+        const members = record.members
           .sort(
             (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
           )
@@ -348,69 +339,111 @@ export function RegistrationManager({
           }));
 
         return {
-          id: group.id,
-          name: group.name,
+          id: record.id,
+          name: record.name,
           statusLabel: label,
           statusTone: tone,
-          latestSubmittedAt: group.latestSubmittedAt,
-          statuses: group.statuses,
+          latestSubmittedAt: record.latestSubmittedAt,
+          statuses: record.statuses,
           members
-        };
+        } as TeamCompetitionOverview;
       })
       .sort(
         (a, b) =>
           new Date(b.latestSubmittedAt).getTime() - new Date(a.latestSubmittedAt).getTime()
       );
-  }, [data, isTeamRole]);
-
+  }, [data, isTeamRole, statusFilter]);
   const [teamInternalCompetitionId, setTeamInternalCompetitionId] = useState<string | null>(
     teamSelectedCompetitionId ?? null
   );
 
   useEffect(() => {
     if (!isTeamRole) {
-      setTeamInternalCompetitionId(null);
-      onTeamCompetitionChange?.(null);
+      if (teamInternalCompetitionId !== null) {
+        setTeamInternalCompetitionId(null);
+      }
       return;
     }
+
     if (!registeredCompetitions.length) {
-      setTeamInternalCompetitionId(null);
-      onTeamCompetitionChange?.(null);
+      if (teamInternalCompetitionId !== null) {
+        setTeamInternalCompetitionId(null);
+      }
       return;
     }
-    if (!teamInternalCompetitionId) {
-      const nextId = registeredCompetitions[0].id;
-      setTeamInternalCompetitionId(nextId);
-      onTeamCompetitionChange?.(nextId);
+
+    const currentId = teamInternalCompetitionId;
+    const desiredId = teamSelectedCompetitionId ?? currentId;
+
+    if (
+      desiredId &&
+      registeredCompetitions.some((item) => item.id === desiredId)
+    ) {
+      if (currentId !== desiredId) {
+        setTeamInternalCompetitionId(desiredId);
+      }
       return;
     }
-    if (!registeredCompetitions.some((item) => item.id === teamInternalCompetitionId)) {
-      const nextId = registeredCompetitions[0].id;
-      setTeamInternalCompetitionId(nextId);
-      onTeamCompetitionChange?.(nextId);
+
+    const fallbackId = registeredCompetitions[0]?.id ?? null;
+    if (fallbackId && fallbackId !== currentId) {
+      setTeamInternalCompetitionId(fallbackId);
     }
-  }, [isTeamRole, registeredCompetitions, teamInternalCompetitionId, onTeamCompetitionChange]);
+  }, [isTeamRole, registeredCompetitions, teamSelectedCompetitionId, teamInternalCompetitionId]);
+
+  const currentCompetitionOverview = useMemo(() => {
+    if (!isTeamRole) return null;
+    return registeredCompetitions.find((item) => item.id === teamInternalCompetitionId) ?? null;
+  }, [isTeamRole, registeredCompetitions, teamInternalCompetitionId]);
+
+  const overviewSyncRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!isTeamRole) return;
-    if (teamSelectedCompetitionId === undefined) return;
-    if (teamSelectedCompetitionId !== teamInternalCompetitionId) {
-      setTeamInternalCompetitionId(teamSelectedCompetitionId);
+    if (!onTeamCompetitionChange) return;
+    if (!isTeamRole) {
+      if (overviewSyncRef.current !== 'null') {
+        overviewSyncRef.current = 'null';
+        onTeamCompetitionChange(null, null);
+      }
+      return;
     }
-  }, [isTeamRole, teamSelectedCompetitionId, teamInternalCompetitionId]);
 
-  const selectedTeamCompetition = useMemo(
-    () =>
-      isTeamRole
-        ? registeredCompetitions.find((item) => item.id === teamInternalCompetitionId) ?? null
-        : null,
-    [isTeamRole, registeredCompetitions, teamInternalCompetitionId]
-  );
+    const overview = currentCompetitionOverview;
+    const syncKey = overview
+      ? JSON.stringify({
+          id: overview.id,
+          latestSubmittedAt: overview.latestSubmittedAt,
+          statusesHash: overview.statuses.join(','),
+          memberHash: overview.members
+            .map(
+              (member) =>
+                `${member.id}|${member.status}|${member.events}|${member.group ?? ''}`
+            )
+            .join(';')
+        })
+      : 'null';
+
+    if (overviewSyncRef.current === syncKey) {
+      return;
+    }
+
+    overviewSyncRef.current = syncKey;
+    onTeamCompetitionChange(overview?.id ?? null, overview ?? null);
+  }, [currentCompetitionOverview, isTeamRole, onTeamCompetitionChange]);
 
   const handleTeamCompetitionSelect = (competitionId: string) => {
     setTeamInternalCompetitionId(competitionId);
-    onTeamCompetitionChange?.(competitionId);
+    const overview =
+      registeredCompetitions.find((item) => item.id === competitionId) ?? null;
+    onTeamCompetitionChange?.(competitionId, overview);
   };
+const selectedTeamCompetition = useMemo(
+    () =>
+      isTeamRole
+        ? currentCompetitionOverview
+        : null,
+    [isTeamRole, currentCompetitionOverview]
+  );
 
   return (
     <Card>
@@ -800,4 +833,15 @@ export function RegistrationManager({
     </Card>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
 
