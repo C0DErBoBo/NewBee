@@ -338,7 +338,12 @@ const updateMutation = useMutation({
     );
   };
 
-  const handleEventChange = (memberIndex: number, eventIndex: number, field: 'name' | 'result', value: string) => {
+  const handleEventChange = (
+    memberIndex: number,
+    eventIndex: number,
+    field: 'name' | 'result',
+    value: string
+  ) => {
     setMembersDraft((prev) =>
       prev.map((member, idx) => {
         if (idx !== memberIndex) return member;
@@ -346,8 +351,14 @@ const updateMutation = useMutation({
         while (events.length <= eventIndex) {
           events.push({ name: null, result: null });
         }
-        const updated = { ...events[eventIndex], [field]: value || null };
+        const updatedValue = value || null;
+        const updated = { ...events[eventIndex], [field]: updatedValue };
         events[eventIndex] = updated;
+        if (field === 'name' && !updatedValue) {
+          for (let i = eventIndex + 1; i < events.length; i += 1) {
+            events[i] = { name: null, result: null };
+          }
+        }
         return {
           ...member,
           events
@@ -553,43 +564,58 @@ const updateMutation = useMutation({
                     </select>
                   </td>
                   {[0, 1, 2, 3, 4].map((eventIndex) => {
+                    const previousEvent = eventIndex > 0 ? member.events?.[eventIndex - 1] : null;
                     const event = member.events?.[eventIndex] ?? { name: null, result: null };
+                    const canEditEvent = eventIndex === 0 || Boolean(previousEvent?.name);
                     return (
                       <td
                         key={`event-name-${memberIndex}-${eventIndex}`}
                         className="px-3 py-3 overflow-visible"
                       >
-                        <select
-                          className="h-9 w-full min-w-[7.5rem] rounded-md border border-input bg-background px-3 pr-8 text-sm"
-                          value={event.name ?? ''}
-                          onFocus={handleDropdownFocus}
-                          onBlur={handleDropdownBlur}
-                          onChange={(eventChange) =>
-                            handleEventChange(memberIndex, eventIndex, 'name', eventChange.target.value)
-                          }
-                        >
-                          <option value="">未选择</option>
-                          {eventOptions.map((option) => (
-                            <option key={option.id ?? option.name} value={option.name}>
-                              {option.name}
-                            </option>
-                          ))}
-                        </select>
+                        {canEditEvent ? (
+                          <select
+                            className="h-9 w-full min-w-[7.5rem] rounded-md border border-input bg-background px-3 pr-8 text-sm"
+                            value={event.name ?? ''}
+                            onFocus={handleDropdownFocus}
+                            onBlur={handleDropdownBlur}
+                            onChange={(eventChange) =>
+                              handleEventChange(memberIndex, eventIndex, 'name', eventChange.target.value)
+                            }
+                          >
+                            <option value="">未选择</option>
+                            {eventOptions.map((option) => (
+                              <option key={option.id ?? option.name} value={option.name}>
+                                {option.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <div className="flex h-9 min-w-[7.5rem] items-center justify-center rounded-md border border-dashed border-border/60 bg-muted/30 px-3 text-sm text-muted-foreground">
+                            —
+                          </div>
+                        )}
                       </td>
                     );
                   })}
                   {[0, 1, 2, 3, 4].map((eventIndex) => {
                     const event = member.events?.[eventIndex] ?? { name: null, result: null };
+                    const hasEventSelected = Boolean(event.name);
                     return (
                       <td key={`event-result-${memberIndex}-${eventIndex}`} className="px-3 py-3">
-                        <Input
-                          value={event.result ?? ''}
-                          onChange={(eventChange) =>
-                            handleEventChange(memberIndex, eventIndex, 'result', eventChange.target.value)
-                          }
-                          placeholder="成绩"
-                          className="h-9"
-                        />
+                        {hasEventSelected ? (
+                          <Input
+                            value={event.result ?? ''}
+                            onChange={(eventChange) =>
+                              handleEventChange(memberIndex, eventIndex, 'result', eventChange.target.value)
+                            }
+                            placeholder="成绩"
+                            className="h-9 min-w-[6.5rem]"
+                          />
+                        ) : (
+                          <div className="flex h-9 min-w-[6.5rem] items-center justify-center rounded-md border border-dashed border-border/60 bg-muted/30 px-3 text-sm text-muted-foreground">
+                            —
+                          </div>
+                        )}
                       </td>
                     );
                   })}
