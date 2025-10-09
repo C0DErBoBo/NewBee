@@ -74,6 +74,42 @@ const membersPayloadSchema = z.object({
   competitionId: z.string().uuid().optional()
 });
 
+const membersQuerySchema = z.object({
+  competitionId: z.string().uuid().optional()
+});
+
+function normalizeMemberRecord(input: unknown): z.infer<typeof memberSchema> | null {
+  const candidate =
+    typeof input === 'object' && input !== null
+      ? {
+          ...(input as Record<string, unknown>),
+          events: Array.isArray((input as Record<string, unknown>).events)
+            ? (input as Record<string, unknown>).events
+            : []
+        }
+      : { events: [] };
+
+  const parsed = memberSchema.safeParse(candidate);
+  if (!parsed.success) {
+    return null;
+  }
+
+  const base = parsed.data;
+  const normalizedEvents = (base.events ?? [])
+    .map((event) => ({
+      name: event.name?.trim() || null,
+      result: event.result?.trim() || null
+    }))
+    .filter((event, index) => index < 5 && (event.name || event.result));
+
+  return {
+    name: base.name.trim(),
+    gender: base.gender?.trim() || null,
+    group: base.group?.trim() || null,
+    events: normalizedEvents
+  };
+}
+
 async function syncCompetitionRegistrations(options: {
   client: PoolClient;
   userId: string;
@@ -224,18 +260,34 @@ async function syncCompetitionRegistrations(options: {
   }
 }
 
-const membersQuerySchema = z.object({
-  competitionId: z.string().uuid().optional()
-});
-
 teamRouter.get('/members', async (req: AuthenticatedRequest, res, next) => {
   try {
     const { competitionId } = membersQuerySchema.parse(req.query);
     const team = await ensureTeam(req.user!.id);
 
-    let members: Array<z.infer<typeof memberSchema>> = Array.isArray(team.members)
-      ? (team.members as Array<z.infer<typeof memberSchema>>)
-      : [];
+    const baseMembersRaw = Array.isArray(team.members) ? team.members : [];
+    const baseMembers: Array<z.infer<typeof memberSchema>> = [];
+    const nameIndexMap = new Map<string, number[]>();
+
+    const matchedBaseIndexes = new Set<number>();
+
+    baseMembersRaw.forEach((item) => {
+      const normalized = normalizeMemberRecord(item);
+      if (!normalized) {
+        return;
+      }
+      baseMembers.push(normalized);
+
+      const key = normalized.name.trim().toLowerCase();
+      if (!key) {
+        return;
+      }
+      const indexes = nameIndexMap.get(key) ?? [];
+      indexes.push(baseMembers.length - 1);
+      nameIndexMap.set(key, indexes);
+    });
+
+    let members = [...baseMembers];
 
     if (competitionId) {
       const registrationResult = await pool.query(
@@ -309,13 +361,59 @@ teamRouter.get('/members', async (req: AuthenticatedRequest, res, next) => {
           }
         });
 
-        members = Array.from(memberMap.values())
+        const registrationMembers = Array.from(memberMap.values())
           .sort((a, b) => {
             const timeA = a.createdAt?.getTime() ?? 0;
             const timeB = b.createdAt?.getTime() ?? 0;
             return timeA - timeB;
           })
-          .map(({ createdAt: _createdAt, ...member }) => member);
+          .map(({ createdAt: _createdAt, ...member }) => normalizeMemberRecord(member))
+          .filter((member): member is z.infer<typeof memberSchema> => Boolean(member));
+
+        const appendedMembers: Array<z.infer<typeof memberSchema>> = [];
+
+        registrationMembers.forEach((regMember) => {
+          const key = regMember.name.trim().toLowerCase();
+          if (!key) {
+            appendedMembers.push(regMember);
+            return;
+          }
+
+          const indexList = nameIndexMap.get(key);
+          if (indexList && indexList.length) {
+            const targetIndex = indexList.shift()!;
+            if (indexList.length === 0) {
+              nameIndexMap.delete(key);
+            } else {
+              nameIndexMap.set(key, indexList);
+            }
+
+            const existing = members[targetIndex] ?? regMember;
+            members[targetIndex] = {
+              name: regMember.name,
+              gender: regMember.gender ?? existing.gender ?? null,
+              group: regMember.group ?? existing.group ?? null,
+              events:
+                regMember.events.length > 0
+                  ? regMember.events
+                  : existing.events ?? []
+            };
+            matchedBaseIndexes.add(targetIndex);
+          } else {
+            appendedMembers.push(regMember);
+          }
+        });
+
+        members = members.map((member, index) =>
+          matchedBaseIndexes.has(index)
+            ? member
+            : {
+                ...member,
+                events: []
+              }
+        );
+
+        members = [...members, ...appendedMembers];
       }
     }
 
@@ -338,6 +436,9 @@ teamRouter.put('/members', async (req: AuthenticatedRequest, res, next) => {
 
     const team = await ensureTeam(req.user!.id, client);
     const { members, competitionId } = membersPayloadSchema.parse(req.body);
+    const normalizedMembers = members
+      .map((member) => normalizeMemberRecord(member))
+      .filter((member): member is z.infer<typeof memberSchema> => Boolean(member));
 
     await client.query(
       `
@@ -345,16 +446,20 @@ teamRouter.put('/members', async (req: AuthenticatedRequest, res, next) => {
         SET members = $1
         WHERE id = $2
       `,
-      [JSON.stringify(members), team.id]
+      [JSON.stringify(normalizedMembers), team.id]
     );
 
     if (competitionId) {
+      const activeMembers = normalizedMembers.filter((member) =>
+        member.events.some((event) => event?.name)
+      );
+
       await syncCompetitionRegistrations({
         client,
         userId: req.user!.id,
         teamId: team.id,
         competitionId,
-        members
+        members: activeMembers
       });
     }
 
@@ -365,7 +470,7 @@ teamRouter.put('/members', async (req: AuthenticatedRequest, res, next) => {
         id: team.id,
         name: team.name
       },
-      members
+      members: normalizedMembers
     });
   } catch (error) {
     await client.query('ROLLBACK');

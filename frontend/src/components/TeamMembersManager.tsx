@@ -472,21 +472,21 @@ const updateMutation = useMutation({
     }
 
     const cleaned = normalizeMembers(membersDraft).filter((member) => member.name);
-    if (!cleaned.length) {
-      setSaveError('请至少保留一名队员。');
-      return;
-    }
-
-    const invalidMembers = cleaned.filter(
-      (member) => !(member.events && member.events.some((event) => event.name))
+    const validMembers = cleaned.filter(
+      (member) => member.events && member.events.some((event) => event.name)
     );
 
-    if (invalidMembers.length) {
-      setSaveError('请为每位队员选择至少一个参赛项目。');
+    if (!validMembers.length) {
+      setSaveError('请至少为一名队员选择参赛项目。');
       return;
     }
 
-    setSaveError(null);
+    if (validMembers.length < cleaned.length) {
+      setSaveError('部分队员未选择项目，已跳过录入。');
+    } else {
+      setSaveError(null);
+    }
+
     updateMutation.mutate({ members: cleaned, competitionId: selectedCompetitionId });
   };
 
@@ -637,8 +637,15 @@ const updateMutation = useMutation({
                   groupHasError ? 'border-destructive text-destructive focus-visible:ring-destructive/40' : ''
                 );
                 const genderSelectClass = 'h-9 w-full min-w-[6.5rem] rounded-md border border-input bg-background px-3 pr-8 text-sm text-center';
+                const hasRegisteredEvents = Boolean(member.events?.some((event) => event?.name));
                 return (
-                  <tr key={`member-${memberIndex}`} className="border-t border-border">
+                  <tr
+                    key={`member-${memberIndex}`}
+                    className={cn(
+                      'border-t border-border',
+                      hasRegisteredEvents ? 'bg-emerald-50/60' : ''
+                    )}
+                  >
                     <td className="px-3 py-3 text-center">
                       <Input
                         value={member.name}
