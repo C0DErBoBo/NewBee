@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2, Plus, X } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -18,6 +18,7 @@ import {
   fetchCompetitionDetail,
   CompetitionDetail
 } from '@/services/competitions';
+import { cn } from '@/lib/utils';
 
 type TeamMembersManagerVariant = 'page' | 'modal';
 
@@ -121,6 +122,17 @@ export function TeamMembersManager({
   const [bulkInput, setBulkInput] = useState('');
   const [parseError, setParseError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [activeDropdowns, setActiveDropdowns] = useState(0);
+
+  const handleDropdownFocus = useCallback(() => {
+    setActiveDropdowns((count) => count + 1);
+  }, []);
+
+  const handleDropdownBlur = useCallback(() => {
+    setTimeout(() => {
+      setActiveDropdowns((count) => Math.max(count - 1, 0));
+    }, 0);
+  }, []);
 
   const competitionOptions = useMemo(() => competitions ?? [], [competitions]);
 
@@ -394,8 +406,10 @@ const updateMutation = useMutation({
         </div>
         <div className="flex flex-wrap gap-2">
           <select
-            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            className="h-9 min-w-[9rem] rounded-md border border-input bg-background px-3 pr-8 text-sm"
             value={selectedCompetitionId ?? ''}
+            onFocus={handleDropdownFocus}
+            onBlur={handleDropdownBlur}
             onChange={(event) => {
               const value = event.target.value || null;
               setSelectedCompetitionId(value);
@@ -458,7 +472,12 @@ const updateMutation = useMutation({
         </div>
       )}
 
-      <div className="rounded-md border border-border overflow-x-auto">
+      <div
+        className={cn(
+          'rounded-md border border-border',
+          activeDropdowns > 0 ? 'overflow-visible' : 'overflow-x-auto'
+        )}
+      >
         <table className="min-w-[1100px] text-sm">
           <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
             <tr>
@@ -504,8 +523,10 @@ const updateMutation = useMutation({
                   </td>
                   <td className="px-3 py-3">
                     <select
-                      className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                      className="h-9 w-full min-w-[6.5rem] rounded-md border border-input bg-background px-3 pr-8 text-sm"
                       value={member.gender ?? ''}
+                      onFocus={handleDropdownFocus}
+                      onBlur={handleDropdownBlur}
                       onChange={(event) => handleGenderChange(memberIndex, event.target.value)}
                     >
                       {genders.map((gender) => (
@@ -517,8 +538,10 @@ const updateMutation = useMutation({
                   </td>
                   <td className="px-3 py-3 overflow-visible">
                     <select
-                      className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                      className="h-9 w-full min-w-[7.5rem] rounded-md border border-input bg-background px-3 pr-8 text-sm"
                       value={member.group ?? ''}
+                      onFocus={handleDropdownFocus}
+                      onBlur={handleDropdownBlur}
                       onChange={(event) => handleGroupChange(memberIndex, event.target.value)}
                     >
                       <option value="">未选择</option>
@@ -532,15 +555,17 @@ const updateMutation = useMutation({
                   {[0, 1, 2, 3, 4].map((eventIndex) => {
                     const event = member.events?.[eventIndex] ?? { name: null, result: null };
                     return (
-                    <td
-                      key={`event-name-${memberIndex}-${eventIndex}`}
-                      className="px-3 py-3 overflow-visible"
-                    >
-                      <select
-                        className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
-                        value={event.name ?? ''}
-                        onChange={(eventChange) =>
-                          handleEventChange(memberIndex, eventIndex, 'name', eventChange.target.value)
+                      <td
+                        key={`event-name-${memberIndex}-${eventIndex}`}
+                        className="px-3 py-3 overflow-visible"
+                      >
+                        <select
+                          className="h-9 w-full min-w-[7.5rem] rounded-md border border-input bg-background px-3 pr-8 text-sm"
+                          value={event.name ?? ''}
+                          onFocus={handleDropdownFocus}
+                          onBlur={handleDropdownBlur}
+                          onChange={(eventChange) =>
+                            handleEventChange(memberIndex, eventIndex, 'name', eventChange.target.value)
                           }
                         >
                           <option value="">未选择</option>
