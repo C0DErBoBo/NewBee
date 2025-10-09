@@ -66,7 +66,8 @@ const memberSchema = z.object({
   name: z.string().trim().min(1),
   gender: z.string().trim().max(50).optional().nullable(),
   group: z.string().trim().max(100).optional().nullable(),
-  events: z.array(eventSchema).max(5).default([])
+  events: z.array(eventSchema).max(5).default([]),
+  registered: z.boolean().optional().default(false)
 });
 
 const membersPayloadSchema = z.object({
@@ -106,7 +107,8 @@ function normalizeMemberRecord(input: unknown): z.infer<typeof memberSchema> | n
     name: base.name.trim(),
     gender: base.gender?.trim() || null,
     group: base.group?.trim() || null,
-    events: normalizedEvents
+    events: normalizedEvents,
+    registered: Boolean(base.registered)
   };
 }
 
@@ -269,8 +271,6 @@ teamRouter.get('/members', async (req: AuthenticatedRequest, res, next) => {
     const baseMembers: Array<z.infer<typeof memberSchema>> = [];
     const nameIndexMap = new Map<string, number[]>();
 
-    const matchedBaseIndexes = new Set<number>();
-
     baseMembersRaw.forEach((item) => {
       const normalized = normalizeMemberRecord(item);
       if (!normalized) {
@@ -375,7 +375,7 @@ teamRouter.get('/members', async (req: AuthenticatedRequest, res, next) => {
         registrationMembers.forEach((regMember) => {
           const key = regMember.name.trim().toLowerCase();
           if (!key) {
-            appendedMembers.push(regMember);
+            appendedMembers.push({ ...regMember, registered: true });
             return;
           }
 
@@ -390,28 +390,20 @@ teamRouter.get('/members', async (req: AuthenticatedRequest, res, next) => {
 
             const existing = members[targetIndex] ?? regMember;
             members[targetIndex] = {
+              ...existing,
               name: regMember.name,
               gender: regMember.gender ?? existing.gender ?? null,
               group: regMember.group ?? existing.group ?? null,
               events:
                 regMember.events.length > 0
                   ? regMember.events
-                  : existing.events ?? []
+                  : (existing.events ?? []),
+              registered: true
             };
-            matchedBaseIndexes.add(targetIndex);
           } else {
-            appendedMembers.push(regMember);
+            appendedMembers.push({ ...regMember, registered: true });
           }
         });
-
-        members = members.map((member, index) =>
-          matchedBaseIndexes.has(index)
-            ? member
-            : {
-                ...member,
-                events: []
-              }
-        );
 
         members = [...members, ...appendedMembers];
       }
@@ -450,8 +442,10 @@ teamRouter.put('/members', async (req: AuthenticatedRequest, res, next) => {
     );
 
     if (competitionId) {
-      const activeMembers = normalizedMembers.filter((member) =>
-        member.events.some((event) => event?.name)
+      const activeMembers = normalizedMembers.filter(
+        (member) =>
+          member.registered &&
+          member.events.some((event) => event?.name)
       );
 
       await syncCompetitionRegistrations({

@@ -10,6 +10,7 @@ export interface TeamMember {
   gender?: string | null;
   group?: string | null;
   events: TeamMemberEvent[];
+  registered?: boolean;
 }
 
 export interface TeamMembersResponse {

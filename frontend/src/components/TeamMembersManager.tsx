@@ -48,7 +48,8 @@ function normalizeMembers(members: TeamMember[]): TeamMember[] {
     name: member.name.trim(),
     gender: member.gender?.trim() || null,
     group: member.group?.trim() || null,
-    events: cleanEvents(member.events ?? [])
+    events: cleanEvents(member.events ?? []),
+    registered: Boolean(member.registered)
   }));
 }
 
@@ -120,6 +121,21 @@ export function TeamMembersManager({
   const [invalidGroups, setInvalidGroups] = useState<Record<number, boolean>>({});
   const [invalidEvents, setInvalidEvents] = useState<Record<string, boolean>>({});
 
+  const registeredNameSet = useMemo(() => {
+    const set = new Set<string>();
+    if (selectedCompetitionOverview) {
+      selectedCompetitionOverview.members.forEach((member) => {
+        if (member.status !== 'cancelled') {
+          const key = member.name.trim().toLowerCase();
+          if (key) {
+            set.add(key);
+          }
+        }
+      });
+    }
+    return set;
+  }, [selectedCompetitionOverview]);
+
   const queryClient = useQueryClient();
   const competitionOptions = useMemo(() => competitions ?? [], [competitions]);
 
@@ -170,13 +186,20 @@ useEffect(() => {
     return;
   }
   if (membersQuery.data) {
-    setMembersDraft(normalizeMembers(membersQuery.data.members ?? []));
+    const normalized = normalizeMembers(membersQuery.data.members ?? []).map((member) => ({
+      ...member,
+      registered:
+        typeof member.registered === 'boolean'
+          ? member.registered
+          : registeredNameSet.has(member.name.trim().toLowerCase())
+    }));
+    setMembersDraft(normalized);
     return;
   }
   if (!membersQuery.isFetching) {
     setMembersDraft([]);
   }
-}, [isVisible, selectedCompetitionId, membersQuery.data, membersQuery.isFetching]);
+}, [isVisible, selectedCompetitionId, membersQuery.data, membersQuery.isFetching, registeredNameSet]);
 
 useEffect(() => {
   if (!isVisible) return;
@@ -285,28 +308,37 @@ useEffect(() => {
     competitionOptions,
     selectedCompetitionId
   ]);
-const updateMutation = useMutation({
-  mutationFn: ({ members, competitionId }: { members: TeamMember[]; competitionId: string }) =>
-    updateTeamMembers(members, competitionId),
-  onSuccess: (data, variables) => {
-    const cacheKey = ['team-members', variables.competitionId] as const;
-    queryClient.setQueryData(cacheKey, data);
-    queryClient.invalidateQueries({ queryKey: ['team-members'], exact: false });
-    queryClient.invalidateQueries({ queryKey: ['dashboard-competitions'] });
-    queryClient.invalidateQueries({ queryKey: ['registrations'] });
-    setMembersDraft(normalizeMembers(data.members));
-    setBulkInput('');
-    setParseError(null);
-    setSaveError(null);
-    setBulkInputVisible(false);
-    if (isModal) {
-      onClose?.();
+  const updateMutation = useMutation({
+    mutationFn: ({ members, competitionId }: { members: TeamMember[]; competitionId: string }) =>
+      updateTeamMembers(members, competitionId),
+    onSuccess: (data, variables) => {
+      const cacheKey = ['team-members', variables.competitionId] as const;
+      queryClient.setQueryData(cacheKey, data);
+      queryClient.invalidateQueries({ queryKey: ['team-members'], exact: false });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-competitions'] });
+      queryClient.invalidateQueries({ queryKey: ['registrations'] });
+      setMembersDraft((prev) => {
+        const normalized = normalizeMembers(data.members);
+        const prevStatusMap = new Map(
+          prev.map((member) => [member.name.trim().toLowerCase(), Boolean(member.registered)])
+        );
+        return normalized.map((member) => ({
+          ...member,
+          registered: prevStatusMap.get(member.name.trim().toLowerCase()) ?? false
+        }));
+      });
+      setBulkInput('');
+      setParseError(null);
+      setSaveError(null);
+      setBulkInputVisible(false);
+      if (isModal) {
+        onClose?.();
+      }
+    },
+    onError: (error: unknown) => {
+      setSaveError(error instanceof Error ? error.message : '保存失败，请稍后重试。');
     }
-  },
-  onError: (error: unknown) => {
-    setSaveError(error instanceof Error ? error.message : '保存失败，请稍后重试。');
-  }
-});
+  });
 
   const isLoading = membersQuery.isLoading;
   const isSaving = updateMutation.isPending;
@@ -463,6 +495,57 @@ const updateMutation = useMutation({
 
   const handleRemoveMember = (index: number) => {
     setMembersDraft((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleRegisterMember = (index: number) => {
+    const target = membersDraft[index];
+    if (!selectedCompetitionId) {
+      setSaveError('请选择赛事后再报名。');
+      return;
+    }
+
+    if (!target) {
+      return;
+    }
+
+    const hasSelectedEvents = target.events?.some((event) => event?.name);
+    if (!hasSelectedEvents) {
+      setSaveError('请先为该队员选择至少一个参赛项目。');
+      return;
+    }
+
+    const nextDraft = membersDraft.map((member, idx) =>
+      idx === index ? { ...member, registered: true } : member
+    );
+    setMembersDraft(nextDraft);
+    setSaveError(null);
+    updateMutation.mutate({
+      members: normalizeMembers(nextDraft),
+      competitionId: selectedCompetitionId!
+    });
+  };
+
+  const handleWithdrawMember = (index: number) => {
+    const target = membersDraft[index];
+    if (!selectedCompetitionId) {
+      setSaveError('请选择赛事后再撤销报名。');
+      return;
+    }
+
+    if (!target || !target.registered) {
+      setSaveError('该队员尚未报名。');
+      return;
+    }
+
+    const nextDraft = membersDraft.map((member, idx) =>
+      idx === index ? { ...member, registered: false } : member
+    );
+    setMembersDraft(nextDraft);
+    setSaveError(null);
+    updateMutation.mutate({
+      members: normalizeMembers(nextDraft),
+      competitionId: selectedCompetitionId!
+    });
   };
 
   const handleSave = () => {
@@ -637,13 +720,19 @@ const updateMutation = useMutation({
                   groupHasError ? 'border-destructive text-destructive focus-visible:ring-destructive/40' : ''
                 );
                 const genderSelectClass = 'h-9 w-full min-w-[6.5rem] rounded-md border border-input bg-background px-3 pr-8 text-sm text-center';
-                const hasRegisteredEvents = Boolean(member.events?.some((event) => event?.name));
+                const hasSelectedEvents = Boolean(member.events?.some((event) => event?.name));
+                const isRegistered = Boolean(member.registered);
+                const rowTone = isRegistered
+                  ? 'bg-orange-200/70'
+                  : hasSelectedEvents
+                    ? 'bg-orange-50/70'
+                    : '';
                 return (
                   <tr
                     key={`member-${memberIndex}`}
                     className={cn(
-                      'border-t border-border',
-                      hasRegisteredEvents ? 'bg-emerald-50/60' : ''
+                      'border-t border-border transition-colors',
+                      rowTone
                     )}
                   >
                     <td className="px-3 py-3 text-center">
@@ -783,15 +872,41 @@ const updateMutation = useMutation({
                       );
                     })}
                     <td className="px-3 py-3 text-center">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive"
-                        onClick={() => handleRemoveMember(memberIndex)}
-                        disabled={isSaving}
-                      >
-                        删除
-                      </Button>
+                      <div className="flex items-center justify-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className={cn(
+                            'min-w-[72px]',
+                            isRegistered
+                              ? 'border-orange-500 text-orange-700 hover:bg-orange-50'
+                              : hasSelectedEvents
+                                ? 'border-orange-400 text-orange-600 hover:bg-orange-50'
+                                : 'border-border text-muted-foreground cursor-not-allowed'
+                          )}
+                          onClick={() =>
+                            isRegistered
+                              ? handleWithdrawMember(memberIndex)
+                              : handleRegisterMember(memberIndex)
+                          }
+                          disabled={
+                            isSaving ||
+                            !selectedCompetitionId ||
+                            (!isRegistered && !hasSelectedEvents)
+                          }
+                        >
+                          {isRegistered ? '撤销' : '报名'}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive"
+                          onClick={() => handleRemoveMember(memberIndex)}
+                          disabled={isSaving}
+                        >
+                          删除
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -921,3 +1036,8 @@ const updateMutation = useMutation({
     </Card>
   );
 }
+
+
+
+
+
