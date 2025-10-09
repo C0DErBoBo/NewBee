@@ -20,6 +20,13 @@ import {
 } from '@/services/competitions';
 import { cn } from '@/lib/utils';
 
+type MemberHistoryEntry = {
+  submittedAt: string | null;
+  events: string;
+  group: string | null;
+  statusLabel?: string;
+};
+
 type TeamMembersManagerVariant = 'page' | 'modal';
 
 interface TeamMembersManagerProps {
@@ -91,6 +98,13 @@ function parseMembersInput(raw: string): TeamMember[] {
   return normalizeMembers(parsed);
 }
 
+function formatDateTime(value?: string | null) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
 export function TeamMembersManager({
   competitions,
   variant = 'page',
@@ -134,6 +148,35 @@ export function TeamMembersManager({
       });
     }
     return set;
+  }, [selectedCompetitionOverview]);
+
+  const overviewHistoryMap = useMemo(() => {
+    const map = new Map<string, MemberHistoryEntry[]>();
+
+    (selectedCompetitionOverview?.members ?? []).forEach((entry) => {
+      const key = entry.name.trim().toLowerCase();
+      if (!key) return;
+      const history = map.get(key) ?? [];
+      history.push({
+        submittedAt: entry.submittedAt ?? null,
+        events: entry.events ?? '—',
+        group: entry.group ?? null,
+        statusLabel: entry.statusLabel
+      });
+      map.set(key, history);
+    });
+
+    const getTimeValue = (value?: string | null) => {
+      if (!value) return 0;
+      const time = new Date(value).getTime();
+      return Number.isNaN(time) ? 0 : time;
+    };
+
+    map.forEach((records) => {
+      records.sort((a, b) => getTimeValue(b.submittedAt) - getTimeValue(a.submittedAt));
+    });
+
+    return map;
   }, [selectedCompetitionOverview]);
 
   const queryClient = useQueryClient();
@@ -695,38 +738,56 @@ useEffect(() => {
                 ) : null
               )}
               <th className="px-3 py-2 text-center">操作</th>
+              <th className="px-3 py-2 text-center">报名时间</th>
             </tr>
           </thead>
           <tbody>
             {isLoading ? (
               <tr>
-                <td colSpan={14} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                <td colSpan={16} className="px-3 py-6 text-center text-sm text-muted-foreground">
                   加载中...
                 </td>
               </tr>
             ) : membersDraft.length === 0 ? (
               <tr>
-                <td colSpan={14} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                <td colSpan={16} className="px-3 py-6 text-center text-sm text-muted-foreground">
                   暂无队员数据，点击“批量添加队员”快速录入。
                 </td>
               </tr>
             ) : (
               membersDraft.map((member, memberIndex) => {
-                const nameLength = member.name?.trim().length ?? 0;
-                const preferredWidth = Math.max(nameLength + 1, 6);
                 const groupHasError = Boolean(invalidGroups[memberIndex]);
                 const groupSelectClass = cn(
-                  'h-9 w-full min-w-[7.5rem] rounded-md border border-input bg-background px-3 pr-8 text-sm text-center',
+                  'h-9 w-full min-w-[12rem] rounded-md border border-input bg-background px-3 pr-8 text-sm text-center',
                   groupHasError ? 'border-destructive text-destructive focus-visible:ring-destructive/40' : ''
                 );
-                const genderSelectClass = 'h-9 w-full min-w-[6.5rem] rounded-md border border-input bg-background px-3 pr-8 text-sm text-center';
+                const genderSelectClass =
+                  'h-9 w-full min-w-[8rem] rounded-md border border-input bg-background px-3 pr-8 text-sm text-center';
                 const hasSelectedEvents = Boolean(member.events?.some((event) => event?.name));
                 const isRegistered = Boolean(member.registered);
                 const rowTone = isRegistered
-                  ? 'bg-orange-200/70'
+                  ? 'bg-emerald-400/70'
                   : hasSelectedEvents
-                    ? 'bg-orange-50/70'
+                    ? 'bg-orange-400/70'
                     : '';
+                const historyRecords =
+                  overviewHistoryMap.get(member.name.trim().toLowerCase()) ?? [];
+                const formattedHistory = historyRecords.map((record) => ({
+                  time: formatDateTime(record.submittedAt),
+                  group: record.group ?? '—',
+                  events: record.events || '—',
+                  statusLabel: record.statusLabel ?? '已报名'
+                }));
+                const historyTooltip = formattedHistory.length
+                  ? formattedHistory
+                      .map(
+                        (record) =>
+                          `${record.time}｜${record.group}｜${record.events}｜${record.statusLabel}`
+                      )
+                      .join('\n')
+                  : '暂无历史记录';
+                const historyPreview = formattedHistory.slice(0, 5);
+                const latestHistory = historyPreview[0] ?? null;
                 return (
                   <tr
                     key={`member-${memberIndex}`}
@@ -740,8 +801,7 @@ useEffect(() => {
                         value={member.name}
                         onChange={(event) => handleMemberNameChange(memberIndex, event.target.value)}
                         placeholder="请输入姓名"
-                        className="h-9 w-auto min-w-[6rem] max-w-[18rem]"
-                        style={{ width: `clamp(6rem, ${preferredWidth}ch, 18rem)` }}
+                        className="h-9 min-w-[10rem] text-center"
                       />
                     </td>
                     <td className="px-3 py-3 text-center">
@@ -809,7 +869,7 @@ useEffect(() => {
                         return true;
                       });
                       const eventSelectClass = cn(
-                        'h-9 w-full min-w-[7.5rem] rounded-md border border-input bg-background px-3 pr-8 text-sm text-center',
+                        'h-9 w-full min-w-[12rem] rounded-md border border-input bg-background px-3 pr-8 text-sm text-center',
                         eventHasError ? 'border-destructive text-destructive focus-visible:ring-destructive/40' : ''
                       );
                       return (
@@ -845,7 +905,7 @@ useEffect(() => {
                                 ))}
                               </select>
                             ) : (
-                              <div className="flex h-9 min-w-[7.5rem] items-center justify-center rounded-md border border-dashed border-border/60 bg-muted/30 px-3 text-sm text-muted-foreground">
+                              <div className="flex h-9 min-w-[12rem] items-center justify-center rounded-md border border-dashed border-border/60 bg-muted/30 px-3 text-sm text-muted-foreground">
                                 —
                               </div>
                             )}
@@ -859,10 +919,10 @@ useEffect(() => {
                                     handleEventChange(memberIndex, eventIndex, 'result', eventChange.target.value)
                                   }
                                   placeholder="成绩"
-                                  className="h-9 w-auto min-w-[6.5rem] text-center"
+                                  className="h-9 min-w-[8rem] text-center"
                                 />
                               ) : (
-                                <div className="flex h-9 min-w-[6.5rem] items-center justify-center rounded-md border border-dashed border-border/60 bg-muted/30 px-3 text-sm text-muted-foreground">
+                                <div className="flex h-9 min-w-[8rem] items-center justify-center rounded-md border border-dashed border-border/60 bg-muted/30 px-3 text-sm text-muted-foreground">
                                   —
                                 </div>
                               )}
@@ -906,6 +966,44 @@ useEffect(() => {
                         >
                           删除
                         </Button>
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 text-center align-top">
+                      <div className="flex flex-col items-center gap-1 text-xs text-muted-foreground">
+                        <span className="text-sm font-medium text-foreground">
+                          {latestHistory ? latestHistory.time : '—'}
+                        </span>
+                        <div
+                          className="max-h-28 w-full min-w-[12rem] overflow-y-auto rounded-md border border-border/60 bg-muted/30 px-2 py-1 text-[10px] leading-relaxed break-words"
+                          title={historyTooltip}
+                        >
+                          {historyPreview.length ? (
+                            historyPreview.map((record, idx) => (
+                              <div
+                                key={`${record.time}-${record.group}-${idx}`}
+                                className="flex flex-col items-center gap-0.5 text-center"
+                              >
+                                <span
+                                  className={cn(
+                                    'font-medium',
+                                    idx === 0 ? 'text-foreground' : 'text-muted-foreground'
+                                  )}
+                                >
+                                  {record.time}
+                                </span>
+                                <span className="text-muted-foreground/80">
+                                  {record.group}｜{record.events}
+                                </span>
+                                <span className="text-muted-foreground/70">{record.statusLabel}</span>
+                                {idx < historyPreview.length - 1 && (
+                                  <span className="my-1 block h-px w-full bg-border/60" />
+                                )}
+                              </div>
+                            ))
+                          ) : (
+                            <span className="text-muted-foreground/70">暂无历史记录</span>
+                          )}
+                        </div>
                       </div>
                     </td>
                   </tr>
