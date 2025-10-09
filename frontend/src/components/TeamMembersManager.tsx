@@ -134,6 +134,7 @@ export function TeamMembersManager({
   const [showResults, setShowResults] = useState(false);
   const [invalidGroups, setInvalidGroups] = useState<Record<number, boolean>>({});
   const [invalidEvents, setInvalidEvents] = useState<Record<string, boolean>>({});
+  const [historyOverrides, setHistoryOverrides] = useState<Record<string, MemberHistoryEntry[]>>({});
 
   const registeredNameSet = useMemo(() => {
     const set = new Set<string>();
@@ -179,6 +180,14 @@ export function TeamMembersManager({
     return map;
   }, [selectedCompetitionOverview]);
 
+  const historyMap = useMemo(() => {
+    const merged = new Map<string, MemberHistoryEntry[]>(overviewHistoryMap);
+    Object.entries(historyOverrides).forEach(([key, records]) => {
+      merged.set(key, records);
+    });
+    return merged;
+  }, [overviewHistoryMap, historyOverrides]);
+
   const queryClient = useQueryClient();
   const competitionOptions = useMemo(() => competitions ?? [], [competitions]);
 
@@ -192,6 +201,10 @@ export function TeamMembersManager({
     enabled: isVisible && Boolean(selectedCompetitionId),
     keepPreviousData: false
   });
+
+  useEffect(() => {
+    setHistoryOverrides({});
+  }, [selectedCompetitionId, selectedCompetitionOverview?.latestSubmittedAt]);
 
   const handleDropdownFocus = useCallback(() => {
     setActiveDropdowns((count) => count + 1);
@@ -557,6 +570,32 @@ useEffect(() => {
       return;
     }
 
+    const normalizedName = target.name.trim().toLowerCase();
+    if (normalizedName) {
+      const baseRecords = overviewHistoryMap.get(normalizedName) ?? [];
+      setHistoryOverrides((prev) => {
+        const existingRecords = prev[normalizedName] ?? baseRecords;
+        const eventLabels = (target.events ?? [])
+          .filter((event) => event?.name)
+          .map((event) =>
+            event?.result && event.result.trim()
+              ? `${event.name}（${event.result}）`
+              : event?.name ?? ''
+          )
+          .filter((label): label is string => Boolean(label));
+        const newRecord: MemberHistoryEntry = {
+          submittedAt: new Date().toISOString(),
+          events: eventLabels.length ? eventLabels.join('，') : '—',
+          group: target.group ?? null,
+          statusLabel: '已报名'
+        };
+        return {
+          ...prev,
+          [normalizedName]: [newRecord, ...existingRecords].slice(0, 10)
+        };
+      });
+    }
+
     const nextDraft = membersDraft.map((member, idx) =>
       idx === index ? { ...member, registered: true } : member
     );
@@ -770,24 +809,24 @@ useEffect(() => {
                   : hasSelectedEvents
                     ? 'bg-orange-400/70'
                     : '';
-                const historyRecords =
-                  overviewHistoryMap.get(member.name.trim().toLowerCase()) ?? [];
+                const normalizedName = member.name.trim().toLowerCase();
+                const historyRecords = historyMap.get(normalizedName) ?? [];
                 const formattedHistory = historyRecords.map((record) => ({
-                  time: formatDateTime(record.submittedAt),
-                  group: record.group ?? '—',
-                  events: record.events || '—',
-                  statusLabel: record.statusLabel ?? '已报名'
+                  ...record,
+                  formattedTime: formatDateTime(record.submittedAt),
+                  groupLabel: record.group ?? '—',
+                  eventsLabel: record.events || '—',
+                  status: record.statusLabel ?? '已报名'
                 }));
+                const latestHistory = formattedHistory[0] ?? null;
                 const historyTooltip = formattedHistory.length
                   ? formattedHistory
                       .map(
                         (record) =>
-                          `${record.time}｜${record.group}｜${record.events}｜${record.statusLabel}`
+                          `${record.formattedTime}｜${record.groupLabel}｜${record.eventsLabel}｜${record.status}`
                       )
                       .join('\n')
                   : '暂无历史记录';
-                const historyPreview = formattedHistory.slice(0, 5);
-                const latestHistory = historyPreview[0] ?? null;
                 return (
                   <tr
                     key={`member-${memberIndex}`}
@@ -968,43 +1007,13 @@ useEffect(() => {
                         </Button>
                       </div>
                     </td>
-                    <td className="px-3 py-3 text-center align-top">
-                      <div className="flex flex-col items-center gap-1 text-xs text-muted-foreground">
-                        <span className="text-sm font-medium text-foreground">
-                          {latestHistory ? latestHistory.time : '—'}
-                        </span>
-                        <div
-                          className="max-h-28 w-full min-w-[12rem] overflow-y-auto rounded-md border border-border/60 bg-muted/30 px-2 py-1 text-[10px] leading-relaxed break-words"
-                          title={historyTooltip}
-                        >
-                          {historyPreview.length ? (
-                            historyPreview.map((record, idx) => (
-                              <div
-                                key={`${record.time}-${record.group}-${idx}`}
-                                className="flex flex-col items-center gap-0.5 text-center"
-                              >
-                                <span
-                                  className={cn(
-                                    'font-medium',
-                                    idx === 0 ? 'text-foreground' : 'text-muted-foreground'
-                                  )}
-                                >
-                                  {record.time}
-                                </span>
-                                <span className="text-muted-foreground/80">
-                                  {record.group}｜{record.events}
-                                </span>
-                                <span className="text-muted-foreground/70">{record.statusLabel}</span>
-                                {idx < historyPreview.length - 1 && (
-                                  <span className="my-1 block h-px w-full bg-border/60" />
-                                )}
-                              </div>
-                            ))
-                          ) : (
-                            <span className="text-muted-foreground/70">暂无历史记录</span>
-                          )}
-                        </div>
-                      </div>
+                    <td className="px-3 py-3 text-center">
+                      <span
+                        className="inline-flex min-w-[10rem] items-center justify-center rounded-md border border-border/60 bg-muted/20 px-2 py-1 text-xs font-medium text-foreground"
+                        title={historyTooltip}
+                      >
+                        {latestHistory ? latestHistory.formattedTime : '—'}
+                      </span>
                     </td>
                   </tr>
                 );
