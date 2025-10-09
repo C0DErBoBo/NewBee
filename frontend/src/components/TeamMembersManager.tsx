@@ -26,6 +26,8 @@ interface TeamMembersManagerProps {
   open?: boolean;
   onClose?: () => void;
   initialCompetitionId?: string | null;
+  highlightedCompetitionId?: string | null;
+  onCompetitionChange?: (competitionId: string | null) => void;
 }
 
 function cleanEvents(events: TeamMemberEvent[] = []): TeamMemberEvent[] {
@@ -90,7 +92,9 @@ export function TeamMembersManager({
   variant = 'page',
   open,
   onClose,
-  initialCompetitionId
+  initialCompetitionId,
+  highlightedCompetitionId,
+  onCompetitionChange
 }: TeamMembersManagerProps) {
   const user = useAppSelector((state) => state.auth.user);
   const isTeamRole = user?.role === 'team';
@@ -128,23 +132,36 @@ export function TeamMembersManager({
     }
   }, [competitionOptions, selectedCompetitionId, isVisible]);
 
-  useEffect(() => {
-    if (!isVisible) return;
-    if (initialCompetitionId && initialCompetitionId !== selectedCompetitionId) {
-      setSelectedCompetitionId(initialCompetitionId);
-    }
-  }, [initialCompetitionId, isVisible, selectedCompetitionId]);
+useEffect(() => {
+  if (!isVisible) return;
+  if (initialCompetitionId && initialCompetitionId !== selectedCompetitionId) {
+    setSelectedCompetitionId(initialCompetitionId);
+  }
+}, [initialCompetitionId, isVisible, selectedCompetitionId]);
 
-  useEffect(() => {
-    if (!isVisible) return;
-    setSaveError(null);
-  }, [selectedCompetitionId, isVisible]);
+useEffect(() => {
+  if (!isVisible) return;
+  setSaveError(null);
+}, [selectedCompetitionId, isVisible]);
 
-  useEffect(() => {
-    if (membersQuery.data) {
-      setMembersDraft(normalizeMembers(membersQuery.data.members ?? []));
-    }
-  }, [membersQuery.data]);
+useEffect(() => {
+  if (membersQuery.data) {
+    setMembersDraft(normalizeMembers(membersQuery.data.members ?? []));
+  }
+}, [membersQuery.data]);
+
+useEffect(() => {
+  if (!isVisible) return;
+  if (!highlightedCompetitionId) return;
+  if (highlightedCompetitionId !== selectedCompetitionId) {
+    setSelectedCompetitionId(highlightedCompetitionId);
+  }
+}, [highlightedCompetitionId, isVisible, selectedCompetitionId]);
+
+useEffect(() => {
+  if (!isVisible) return;
+  onCompetitionChange?.(selectedCompetitionId ?? null);
+}, [selectedCompetitionId, isVisible, onCompetitionChange]);
 
   const competitionDetailQuery = useQuery<CompetitionDetail | undefined>({
     queryKey: ['team-members-competition-detail', selectedCompetitionId],
@@ -154,6 +171,40 @@ export function TeamMembersManager({
     },
     enabled: Boolean(selectedCompetitionId) && isVisible
   });
+
+  const currentCompetitionSummary = useMemo(() => {
+    if (!selectedCompetitionId) {
+      return [] as Array<{
+        name: string;
+        group: string | null;
+        gender: string | null;
+        events: Array<{ name: string; result: string | null }>;
+      }>;
+    }
+
+    const allowedEvents = new Set(
+      (competitionDetailQuery.data?.events ?? [])
+        .map((event) => event.name?.trim())
+        .filter((value): value is string => Boolean(value))
+    );
+
+    return membersDraft
+      .map((member) => {
+        const filteredEvents = (member.events ?? []).filter((event) =>
+          event?.name ? allowedEvents.has(event.name.trim()) : false
+        );
+        return {
+          name: member.name,
+          group: member.group ?? null,
+          gender: member.gender ?? null,
+          events: filteredEvents.map((event) => ({
+            name: event?.name ?? '-',
+            result: event?.result ?? null
+          }))
+        };
+      })
+      .filter((entry) => entry.events.length > 0);
+  }, [membersDraft, selectedCompetitionId, competitionDetailQuery.data]);
 
   const updateMutation = useMutation({
     mutationFn: ({ members, competitionId }: { members: TeamMember[]; competitionId: string }) =>
@@ -294,6 +345,7 @@ export function TeamMembersManager({
             onChange={(event) => {
               const value = event.target.value || null;
               setSelectedCompetitionId(value);
+              onCompetitionChange?.(value);
             }}
           >
             {!selectedCompetitionId && <option value="">选择赛事</option>}
@@ -477,6 +529,51 @@ export function TeamMembersManager({
         </table>
       </div>
 
+      {selectedCompetitionId && (
+        <div className="space-y-3 rounded-md border border-border bg-muted/30 p-4">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <h4 className="text-sm font-semibold">当前赛事报名汇总</h4>
+            <span className="text-xs text-muted-foreground">
+              共 {currentCompetitionSummary.length} 名队员
+            </span>
+          </div>
+          {currentCompetitionSummary.length ? (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-muted/60 text-left text-xs uppercase text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2">队员</th>
+                    <th className="px-3 py-2">组别</th>
+                    <th className="px-3 py-2">性别</th>
+                    <th className="px-3 py-2">项目 & 成绩</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {currentCompetitionSummary.map((entry) => (
+                    <tr key={entry.name} className="border-t border-border">
+                      <td className="px-3 py-2 font-medium">{entry.name}</td>
+                      <td className="px-3 py-2">{entry.group ?? '—'}</td>
+                      <td className="px-3 py-2">{entry.gender ?? '—'}</td>
+                      <td className="px-3 py-2 text-xs text-muted-foreground">
+                        {entry.events
+                          .map((event) =>
+                            event.result ? `${event.name}（${event.result}）` : event.name
+                          )
+                          .join('，')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              当前赛事暂未为任一队员配置项目，请在上方表格中为队员选择本赛事项目后保存。
+            </p>
+          )}
+        </div>
+      )}
+
       {saveError && <p className="text-xs text-destructive text-right">{saveError}</p>}
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -544,4 +641,5 @@ export function TeamMembersManager({
     </Card>
   );
 }
+
 

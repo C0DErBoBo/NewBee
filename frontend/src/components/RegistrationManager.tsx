@@ -18,6 +18,8 @@ interface RegistrationManagerProps {
   competitions: CompetitionSummary[];
   externalCompetitionId?: string | null;
   onExternalCompetitionConsumed?: () => void;
+  teamSelectedCompetitionId?: string | null;
+  onTeamCompetitionChange?: (competitionId: string | null) => void;
 }
 
 const statusOptions: Array<{ label: string; value: RegistrationStatus | '' }> = [
@@ -92,7 +94,9 @@ function formatSelections(selections: { eventName: string | null; eventId: strin
 export function RegistrationManager({
   competitions,
   externalCompetitionId,
-  onExternalCompetitionConsumed
+  onExternalCompetitionConsumed,
+  teamSelectedCompetitionId,
+  onTeamCompetitionChange
 }: RegistrationManagerProps) {
   const user = useAppSelector((state) => state.auth.user);
   const queryClient = useQueryClient();
@@ -359,35 +363,54 @@ export function RegistrationManager({
       );
   }, [data, isTeamRole]);
 
-  const [teamSelectedCompetitionId, setTeamSelectedCompetitionId] = useState<string | null>(
-    null
+  const [teamInternalCompetitionId, setTeamInternalCompetitionId] = useState<string | null>(
+    teamSelectedCompetitionId ?? null
   );
 
   useEffect(() => {
     if (!isTeamRole) {
-      setTeamSelectedCompetitionId(null);
+      setTeamInternalCompetitionId(null);
+      onTeamCompetitionChange?.(null);
       return;
     }
     if (!registeredCompetitions.length) {
-      setTeamSelectedCompetitionId(null);
+      setTeamInternalCompetitionId(null);
+      onTeamCompetitionChange?.(null);
       return;
     }
-    if (!teamSelectedCompetitionId) {
-      setTeamSelectedCompetitionId(registeredCompetitions[0].id);
+    if (!teamInternalCompetitionId) {
+      const nextId = registeredCompetitions[0].id;
+      setTeamInternalCompetitionId(nextId);
+      onTeamCompetitionChange?.(nextId);
       return;
     }
-    if (!registeredCompetitions.some((item) => item.id === teamSelectedCompetitionId)) {
-      setTeamSelectedCompetitionId(registeredCompetitions[0].id);
+    if (!registeredCompetitions.some((item) => item.id === teamInternalCompetitionId)) {
+      const nextId = registeredCompetitions[0].id;
+      setTeamInternalCompetitionId(nextId);
+      onTeamCompetitionChange?.(nextId);
     }
-  }, [isTeamRole, registeredCompetitions, teamSelectedCompetitionId]);
+  }, [isTeamRole, registeredCompetitions, teamInternalCompetitionId, onTeamCompetitionChange]);
+
+  useEffect(() => {
+    if (!isTeamRole) return;
+    if (teamSelectedCompetitionId === undefined) return;
+    if (teamSelectedCompetitionId !== teamInternalCompetitionId) {
+      setTeamInternalCompetitionId(teamSelectedCompetitionId);
+    }
+  }, [isTeamRole, teamSelectedCompetitionId, teamInternalCompetitionId]);
 
   const selectedTeamCompetition = useMemo(
     () =>
       isTeamRole
-        ? registeredCompetitions.find((item) => item.id === teamSelectedCompetitionId) ?? null
+        ? registeredCompetitions.find((item) => item.id === teamInternalCompetitionId) ?? null
         : null,
-    [isTeamRole, registeredCompetitions, teamSelectedCompetitionId]
+    [isTeamRole, registeredCompetitions, teamInternalCompetitionId]
   );
+
+  const handleTeamCompetitionSelect = (competitionId: string) => {
+    setTeamInternalCompetitionId(competitionId);
+    onTeamCompetitionChange?.(competitionId);
+  };
 
   return (
     <Card>
@@ -426,12 +449,12 @@ export function RegistrationManager({
               <>
                 <div className="grid gap-3 md:grid-cols-2">
                   {registeredCompetitions.map((item) => {
-                    const isSelected = teamSelectedCompetitionId === item.id;
+                    const isSelected = teamInternalCompetitionId === item.id;
                     return (
                       <button
                         key={item.id}
                         type="button"
-                        onClick={() => setTeamSelectedCompetitionId(item.id)}
+                        onClick={() => handleTeamCompetitionSelect(item.id)}
                         className={cn(
                           'rounded-md border border-border p-3 text-left transition focus:outline-none focus:ring-2 focus:ring-primary/50',
                           isSelected ? 'border-primary ring-2 ring-primary/40 bg-primary/5' : 'hover:border-primary/60'

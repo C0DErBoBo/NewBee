@@ -1,4 +1,4 @@
-﻿import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+﻿import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useAppDispatch, useAppSelector } from './store';
@@ -82,6 +82,9 @@ export default function App() {
     competitionId: null
   });
   const [registrationCompetitionTarget, setRegistrationCompetitionTarget] = useState<string | null>(
+    null
+  );
+  const [teamCurrentCompetitionId, setTeamCurrentCompetitionId] = useState<string | null>(
     null
   );
   const pageSize = 6;
@@ -214,8 +217,13 @@ export default function App() {
       setPhone('');
       setCode('');
       setWechatCode('');
+      setTeamCurrentCompetitionId(null);
     }
   }, [user]);
+
+  const handleTeamCompetitionChange = useCallback((competitionId: string | null) => {
+    setTeamCurrentCompetitionId(competitionId);
+  }, []);
 
   useEffect(() => {
     if (!toast) return;
@@ -766,8 +774,16 @@ export default function App() {
                 competitions={competitionData}
                 externalCompetitionId={registrationCompetitionTarget}
                 onExternalCompetitionConsumed={() => setRegistrationCompetitionTarget(null)}
+                teamSelectedCompetitionId={teamCurrentCompetitionId}
+                onTeamCompetitionChange={handleTeamCompetitionChange}
               />
-              {isTeam && <TeamMembersManager competitions={competitionData} />}
+              {isTeam && (
+                <TeamMembersManager
+                  competitions={competitionData}
+                  highlightedCompetitionId={teamCurrentCompetitionId}
+                  onCompetitionChange={handleTeamCompetitionChange}
+                />
+              )}
             </TabsContent>
 
             {isAdmin && (
@@ -881,6 +897,8 @@ export default function App() {
           variant="modal"
           open={teamMembersModal.open}
           initialCompetitionId={teamMembersModal.competitionId}
+          highlightedCompetitionId={teamCurrentCompetitionId ?? teamMembersModal.competitionId}
+          onCompetitionChange={handleTeamCompetitionChange}
           onClose={() => setTeamMembersModal({ open: false, competitionId: null })}
         />
       )}
@@ -917,3 +935,5 @@ function formatRange(start?: string, end?: string) {
   const endText = end ? new Date(end).toLocaleString() : '待定';
   return `${startText} ~ ${endText}`;
 }
+
+
