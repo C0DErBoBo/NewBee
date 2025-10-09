@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2, Plus, X } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -123,6 +123,9 @@ export function TeamMembersManager({
   const [parseError, setParseError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [activeDropdowns, setActiveDropdowns] = useState(0);
+  const [showResults, setShowResults] = useState(false);
+  const [invalidGroups, setInvalidGroups] = useState<Record<number, boolean>>({});
+  const [invalidEvents, setInvalidEvents] = useState<Record<string, boolean>>({});
 
   const handleDropdownFocus = useCallback(() => {
     setActiveDropdowns((count) => count + 1);
@@ -298,6 +301,59 @@ const updateMutation = useMutation({
 
   const groupOptions = competitionDetailQuery.data?.groups ?? [];
   const eventOptions = competitionDetailQuery.data?.events ?? [];
+  const validGroupNames = useMemo(() => {
+    return new Set(
+      groupOptions
+        .map((group) => group?.name?.trim())
+        .filter((name): name is string => Boolean(name))
+    );
+  }, [groupOptions]);
+  const validEventNames = useMemo(() => {
+    return new Set(
+      eventOptions
+        .map((event) => event?.name?.trim())
+        .filter((name): name is string => Boolean(name))
+    );
+  }, [eventOptions]);
+  const eventVisibility = useMemo(() => {
+    const visibility = Array.from({ length: 5 }, () => false);
+    visibility[0] = true;
+    for (let i = 1; i < 5; i += 1) {
+      visibility[i] = membersDraft.some((member) => Boolean(member.events?.[i - 1]?.name));
+    }
+    return visibility;
+  }, [membersDraft]);
+  useEffect(() => {
+    const nextInvalidGroups: Record<number, boolean> = {};
+    const nextInvalidEvents: Record<string, boolean> = {};
+
+    membersDraft.forEach((member, memberIndex) => {
+      const groupName = member.group?.trim();
+      if (groupName && validGroupNames.size > 0 && !validGroupNames.has(groupName)) {
+        nextInvalidGroups[memberIndex] = true;
+      }
+      member.events?.forEach((event, eventIndex) => {
+        const eventName = event.name?.trim();
+        if (eventName && validEventNames.size > 0 && !validEventNames.has(eventName)) {
+          nextInvalidEvents[`${memberIndex}-${eventIndex}`] = true;
+        }
+      });
+    });
+
+    setInvalidGroups(nextInvalidGroups);
+    setInvalidEvents(nextInvalidEvents);
+  }, [membersDraft, validGroupNames, validEventNames]);
+
+  useEffect(() => {
+    if (
+      Object.keys(invalidGroups).length === 0 &&
+      Object.keys(invalidEvents).length === 0 &&
+      parseError &&
+      parseError.startsWith('存在无效的组别或项目')
+    ) {
+      setParseError(null);
+    }
+  }, [invalidGroups, invalidEvents, parseError]);
 
   const handleAddMembers = () => {
     try {
@@ -308,7 +364,27 @@ const updateMutation = useMutation({
         setParseError('请至少填写一行队员数据');
         return;
       }
-      setMembersDraft((prev) => normalizeMembers([...prev, ...parsed]));
+      const normalizedParsed = normalizeMembers(parsed);
+      let hasInvalid = false;
+      if (validGroupNames.size > 0 || validEventNames.size > 0) {
+        normalizedParsed.forEach((member) => {
+          const groupName = member.group?.trim();
+          if (groupName && validGroupNames.size > 0 && !validGroupNames.has(groupName)) {
+            hasInvalid = true;
+          }
+          member.events?.forEach((event) => {
+            const eventName = event.name?.trim();
+            if (eventName && validEventNames.size > 0 && !validEventNames.has(eventName)) {
+              hasInvalid = true;
+            }
+          });
+        });
+      }
+      setMembersDraft((prev) => normalizeMembers([...prev, ...normalizedParsed]));
+      if (hasInvalid) {
+        setParseError('存在无效的组别或项目，已用红色标注，请检查。');
+        return;
+      }
       setBulkInput('');
       setBulkInputVisible(false);
     } catch (error) {
@@ -357,6 +433,12 @@ const updateMutation = useMutation({
         if (field === 'name' && !updatedValue) {
           for (let i = eventIndex + 1; i < events.length; i += 1) {
             events[i] = { name: null, result: null };
+          }
+        } else if (field === 'name' && updatedValue) {
+          for (let i = 0; i < events.length; i += 1) {
+            if (i !== eventIndex && events[i]?.name === updatedValue) {
+              events[i] = { ...events[i], name: null, result: null };
+            }
           }
         }
         return {
@@ -417,7 +499,8 @@ const updateMutation = useMutation({
         </div>
         <div className="flex flex-wrap gap-2">
           <select
-            className="h-9 min-w-[9rem] rounded-md border border-input bg-background px-3 pr-8 text-sm"
+            className="h-9 min-w-[9rem] rounded-md border border-input bg-background px-3 pr-8 text-sm text-center"
+            style={{ textAlignLast: 'center' }}
             value={selectedCompetitionId ?? ''}
             onFocus={handleDropdownFocus}
             onBlur={handleDropdownBlur}
@@ -427,9 +510,13 @@ const updateMutation = useMutation({
               onCompetitionChange?.(value, null);
             }}
           >
-            {!selectedCompetitionId && <option value="">选择赛事</option>}
+            {!selectedCompetitionId && (
+              <option value="" className="text-center">
+                选择赛事
+              </option>
+            )}
             {competitionOptions.map((item) => (
-              <option key={item.id} value={item.id}>
+              <option key={item.id} value={item.id} className="text-center">
                 {item.name}
               </option>
             ))}
@@ -448,6 +535,13 @@ const updateMutation = useMutation({
             onClick={() => setBulkInputVisible((prev) => !prev)}
           >
             <Plus className="mr-2 h-4 w-4" /> 批量添加队员
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowResults((prev) => !prev)}
+          >
+            {showResults ? '隐藏成绩列' : '显示成绩列'}
           </Button>
         </div>
       </div>
@@ -485,27 +579,27 @@ const updateMutation = useMutation({
 
       <div
         className={cn(
-          'rounded-md border border-border',
-          activeDropdowns > 0 ? 'overflow-visible' : 'overflow-x-auto'
+          'rounded-md border border-border overflow-x-auto',
+          activeDropdowns > 0 ? 'overflow-y-visible' : 'overflow-y-hidden'
         )}
       >
         <table className="min-w-[1100px] text-sm">
           <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
             <tr>
-              <th className="px-3 py-2">姓名</th>
-              <th className="px-3 py-2">性别</th>
-              <th className="px-3 py-2">组别</th>
-              {[1, 2, 3, 4, 5].map((index) => (
-                <th key={`event-name-${index}`} className="px-3 py-2">
-                  项目{index}
-                </th>
-              ))}
-              {[1, 2, 3, 4, 5].map((index) => (
-                <th key={`event-result-${index}`} className="px-3 py-2">
-                  成绩{index}
-                </th>
-              ))}
-              <th className="px-3 py-2 text-right">操作</th>
+              <th className="px-3 py-2 text-center">姓名</th>
+              <th className="px-3 py-2 text-center">性别</th>
+              <th className="px-3 py-2 text-center">组别</th>
+              {[0, 1, 2, 3, 4].map((index) =>
+                eventVisibility[index] ? (
+                  <Fragment key={`event-header-${index}`}>
+                    <th className="px-3 py-2 text-center">项目{index + 1}</th>
+                    {showResults && (
+                      <th className="px-3 py-2 text-center">成绩{index + 1}</th>
+                    )}
+                  </Fragment>
+                ) : null
+              )}
+              <th className="px-3 py-2 text-center">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -522,116 +616,167 @@ const updateMutation = useMutation({
                 </td>
               </tr>
             ) : (
-              membersDraft.map((member, memberIndex) => (
-                <tr key={`${member.name}-${memberIndex}`} className="border-t border-border">
-                  <td className="px-3 py-3">
-                    <Input
-                      value={member.name}
-                      onChange={(event) => handleMemberNameChange(memberIndex, event.target.value)}
-                      placeholder="请输入姓名"
-                      className="h-9"
-                    />
-                  </td>
-                  <td className="px-3 py-3">
-                    <select
-                      className="h-9 w-full min-w-[6.5rem] rounded-md border border-input bg-background px-3 pr-8 text-sm"
-                      value={member.gender ?? ''}
-                      onFocus={handleDropdownFocus}
-                      onBlur={handleDropdownBlur}
-                      onChange={(event) => handleGenderChange(memberIndex, event.target.value)}
-                    >
-                      {genders.map((gender) => (
-                        <option key={gender || 'empty'} value={gender}>
-                          {gender ? gender : '未选择'}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="px-3 py-3 overflow-visible">
-                    <select
-                      className="h-9 w-full min-w-[7.5rem] rounded-md border border-input bg-background px-3 pr-8 text-sm"
-                      value={member.group ?? ''}
-                      onFocus={handleDropdownFocus}
-                      onBlur={handleDropdownBlur}
-                      onChange={(event) => handleGroupChange(memberIndex, event.target.value)}
-                    >
-                      <option value="">未选择</option>
-                      {groupOptions.map((group) => (
-                        <option key={group.id ?? group.name} value={group.name}>
-                          {group.name}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  {[0, 1, 2, 3, 4].map((eventIndex) => {
-                    const previousEvent = eventIndex > 0 ? member.events?.[eventIndex - 1] : null;
-                    const event = member.events?.[eventIndex] ?? { name: null, result: null };
-                    const canEditEvent = eventIndex === 0 || Boolean(previousEvent?.name);
-                    return (
-                      <td
-                        key={`event-name-${memberIndex}-${eventIndex}`}
-                        className="px-3 py-3 overflow-visible"
+              membersDraft.map((member, memberIndex) => {
+                const nameLength = member.name?.trim().length ?? 0;
+                const preferredWidth = Math.max(nameLength + 1, 6);
+                const groupHasError = Boolean(invalidGroups[memberIndex]);
+                const groupSelectClass = cn(
+                  'h-9 w-full min-w-[7.5rem] rounded-md border border-input bg-background px-3 pr-8 text-sm text-center',
+                  groupHasError ? 'border-destructive text-destructive focus-visible:ring-destructive/40' : ''
+                );
+                const genderSelectClass = 'h-9 w-full min-w-[6.5rem] rounded-md border border-input bg-background px-3 pr-8 text-sm text-center';
+                return (
+                  <tr key={`member-${memberIndex}`} className="border-t border-border">
+                    <td className="px-3 py-3 text-center">
+                      <Input
+                        value={member.name}
+                        onChange={(event) => handleMemberNameChange(memberIndex, event.target.value)}
+                        placeholder="请输入姓名"
+                        className="h-9 w-auto min-w-[6rem] max-w-[18rem]"
+                        style={{ width: `clamp(6rem, ${preferredWidth}ch, 18rem)` }}
+                      />
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      <select
+                        className={genderSelectClass}
+                        style={{ textAlignLast: 'center' }}
+                        value={member.gender ?? ''}
+                        onFocus={handleDropdownFocus}
+                        onBlur={handleDropdownBlur}
+                        onChange={(event) => handleGenderChange(memberIndex, event.target.value)}
                       >
-                        {canEditEvent ? (
-                          <select
-                            className="h-9 w-full min-w-[7.5rem] rounded-md border border-input bg-background px-3 pr-8 text-sm"
-                            value={event.name ?? ''}
-                            onFocus={handleDropdownFocus}
-                            onBlur={handleDropdownBlur}
-                            onChange={(eventChange) =>
-                              handleEventChange(memberIndex, eventIndex, 'name', eventChange.target.value)
-                            }
-                          >
-                            <option value="">未选择</option>
-                            {eventOptions.map((option) => (
-                              <option key={option.id ?? option.name} value={option.name}>
-                                {option.name}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <div className="flex h-9 min-w-[7.5rem] items-center justify-center rounded-md border border-dashed border-border/60 bg-muted/30 px-3 text-sm text-muted-foreground">
-                            —
-                          </div>
-                        )}
-                      </td>
-                    );
-                  })}
-                  {[0, 1, 2, 3, 4].map((eventIndex) => {
-                    const event = member.events?.[eventIndex] ?? { name: null, result: null };
-                    const hasEventSelected = Boolean(event.name);
-                    return (
-                      <td key={`event-result-${memberIndex}-${eventIndex}`} className="px-3 py-3">
-                        {hasEventSelected ? (
-                          <Input
-                            value={event.result ?? ''}
-                            onChange={(eventChange) =>
-                              handleEventChange(memberIndex, eventIndex, 'result', eventChange.target.value)
-                            }
-                            placeholder="成绩"
-                            className="h-9 min-w-[6.5rem]"
-                          />
-                        ) : (
-                          <div className="flex h-9 min-w-[6.5rem] items-center justify-center rounded-md border border-dashed border-border/60 bg-muted/30 px-3 text-sm text-muted-foreground">
-                            —
-                          </div>
-                        )}
-                      </td>
-                    );
-                  })}
-                  <td className="px-3 py-3 text-right">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-destructive"
-                      onClick={() => handleRemoveMember(memberIndex)}
-                      disabled={isSaving}
-                    >
-                      删除
-                    </Button>
-                  </td>
-                </tr>
-              ))
+                        {genders.map((gender) => (
+                          <option key={gender || 'empty'} value={gender} className="text-center">
+                            {gender ? gender : '未选择'}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      <select
+                        className={groupSelectClass}
+                        style={{ textAlignLast: 'center' }}
+                        value={member.group ?? ''}
+                        onFocus={handleDropdownFocus}
+                        onBlur={handleDropdownBlur}
+                        onChange={(event) => handleGroupChange(memberIndex, event.target.value)}
+                      >
+                        <option value="" className="text-center">
+                          未选择
+                        </option>
+                        {groupHasError && member.group ? (
+                          <option value={member.group ?? ''} className="text-center">
+                            {member.group}（无效）
+                          </option>
+                        ) : null}
+                        {groupOptions.map((group) => (
+                          <option key={group.id ?? group.name} value={group.name} className="text-center">
+                            {group.name}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    {[0, 1, 2, 3, 4].map((eventIndex) => {
+                      if (!eventVisibility[eventIndex]) {
+                        return null;
+                      }
+                      const previousEvent = eventIndex > 0 ? member.events?.[eventIndex - 1] : null;
+                      const event = member.events?.[eventIndex] ?? { name: null, result: null };
+                      const canEditEvent = eventIndex === 0 || Boolean(previousEvent?.name);
+                      const eventKey = `${memberIndex}-${eventIndex}`;
+                      const eventHasError = Boolean(invalidEvents[eventKey]);
+                      const previousSelectedNames = new Set(
+                        (member.events ?? [])
+                          .slice(0, eventIndex)
+                          .map((item) => item?.name?.trim())
+                          .filter((name): name is string => Boolean(name))
+                      );
+                      const currentEventName = event.name?.trim() ?? '';
+                      const filteredEventOptions = eventOptions.filter((option) => {
+                        const optionName = option?.name?.trim();
+                        if (!optionName) return false;
+                        if (previousSelectedNames.has(optionName) && optionName !== currentEventName) {
+                          return false;
+                        }
+                        return true;
+                      });
+                      const eventSelectClass = cn(
+                        'h-9 w-full min-w-[7.5rem] rounded-md border border-input bg-background px-3 pr-8 text-sm text-center',
+                        eventHasError ? 'border-destructive text-destructive focus-visible:ring-destructive/40' : ''
+                      );
+                      return (
+                        <Fragment key={`event-${memberIndex}-${eventIndex}`}>
+                          <td className="px-3 py-3 text-center">
+                            {canEditEvent ? (
+                              <select
+                                className={eventSelectClass}
+                                style={{ textAlignLast: 'center' }}
+                                value={event.name ?? ''}
+                                onFocus={handleDropdownFocus}
+                                onBlur={handleDropdownBlur}
+                                onChange={(eventChange) =>
+                                  handleEventChange(memberIndex, eventIndex, 'name', eventChange.target.value)
+                                }
+                              >
+                                <option value="" className="text-center">
+                                  未选择
+                                </option>
+                                {eventHasError && currentEventName ? (
+                                  <option value={event.name ?? ''} className="text-center">
+                                    {event.name}（无效）
+                                  </option>
+                                ) : null}
+                                {filteredEventOptions.map((option) => (
+                                  <option
+                                    key={option.id ?? option.name}
+                                    value={option.name}
+                                    className="text-center"
+                                  >
+                                    {option.name}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <div className="flex h-9 min-w-[7.5rem] items-center justify-center rounded-md border border-dashed border-border/60 bg-muted/30 px-3 text-sm text-muted-foreground">
+                                —
+                              </div>
+                            )}
+                          </td>
+                          {showResults && (
+                            <td className="px-3 py-3 text-center">
+                              {canEditEvent && event.name ? (
+                                <Input
+                                  value={event.result ?? ''}
+                                  onChange={(eventChange) =>
+                                    handleEventChange(memberIndex, eventIndex, 'result', eventChange.target.value)
+                                  }
+                                  placeholder="成绩"
+                                  className="h-9 w-auto min-w-[6.5rem] text-center"
+                                />
+                              ) : (
+                                <div className="flex h-9 min-w-[6.5rem] items-center justify-center rounded-md border border-dashed border-border/60 bg-muted/30 px-3 text-sm text-muted-foreground">
+                                  —
+                                </div>
+                              )}
+                            </td>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                    <td className="px-3 py-3 text-center">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive"
+                        onClick={() => handleRemoveMember(memberIndex)}
+                        disabled={isSaving}
+                      >
+                        删除
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
@@ -757,15 +902,3 @@ const updateMutation = useMutation({
     </Card>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
