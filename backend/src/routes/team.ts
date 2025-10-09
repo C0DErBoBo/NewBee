@@ -224,10 +224,101 @@ async function syncCompetitionRegistrations(options: {
   }
 }
 
+const membersQuerySchema = z.object({
+  competitionId: z.string().uuid().optional()
+});
+
 teamRouter.get('/members', async (req: AuthenticatedRequest, res, next) => {
   try {
+    const { competitionId } = membersQuerySchema.parse(req.query);
     const team = await ensureTeam(req.user!.id);
-    const members = Array.isArray(team.members) ? team.members : [];
+
+    let members: Array<z.infer<typeof memberSchema>> = Array.isArray(team.members)
+      ? (team.members as Array<z.infer<typeof memberSchema>>)
+      : [];
+
+    if (competitionId) {
+      const registrationResult = await pool.query(
+        `
+          SELECT
+            cr.id,
+            cr.participant_name,
+            cr.participant_gender,
+            cr.extra->>'group' AS participant_group,
+            ce.name AS event_name,
+            cr.created_at
+          FROM competition_registrations cr
+          LEFT JOIN competition_registration_events cre
+            ON cre.registration_id = cr.id
+          LEFT JOIN competition_events ce
+            ON ce.id = cre.event_id
+          WHERE cr.competition_id = $1
+            AND cr.team_id = $2
+            AND cr.status <> 'cancelled'
+          ORDER BY cr.created_at ASC, ce.name ASC
+        `,
+        [competitionId, team.id]
+      );
+
+      if (registrationResult.rows.length > 0) {
+        const memberMap = new Map<
+          string,
+          {
+            name: string;
+            gender: string | null;
+            group: string | null;
+            events: Array<{ name: string | null; result: string | null }>;
+            createdAt: Date | null;
+          }
+        >();
+
+        registrationResult.rows.forEach((row) => {
+          const participantName =
+            typeof row.participant_name === 'string' ? row.participant_name.trim() : '';
+          if (!participantName) {
+            return;
+          }
+
+          const mapKey = String(row.id);
+          let member = memberMap.get(mapKey);
+
+          if (!member) {
+            const gender =
+              typeof row.participant_gender === 'string'
+                ? row.participant_gender.trim() || null
+                : null;
+            const groupName =
+              typeof row.participant_group === 'string'
+                ? row.participant_group.trim() || null
+                : null;
+
+            member = {
+              name: participantName,
+              gender,
+              group: groupName,
+              events: [],
+              createdAt: row.created_at ? new Date(row.created_at) : null
+            };
+            memberMap.set(mapKey, member);
+          }
+
+          const eventName =
+            typeof row.event_name === 'string' ? row.event_name.trim() : null;
+          if (eventName && !member.events.some((event) => event.name === eventName)) {
+            member.events.push({ name: eventName, result: null });
+          }
+        });
+
+        members = Array.from(memberMap.values())
+          .sort((a, b) => {
+            const timeA = a.createdAt?.getTime() ?? 0;
+            const timeB = b.createdAt?.getTime() ?? 0;
+            return timeA - timeB;
+          })
+          .map(({ createdAt: _createdAt, ...member }) => member);
+      }
+    }
+
     res.json({
       team: {
         id: team.id,

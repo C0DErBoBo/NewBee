@@ -20,8 +20,10 @@ export interface TeamMembersResponse {
   members: TeamMember[];
 }
 
-export async function fetchTeamMembers() {
-  const { data } = await apiClient.get<TeamMembersResponse>('/team/members');
+export async function fetchTeamMembers(competitionId?: string | null) {
+  const { data } = await apiClient.get<TeamMembersResponse>('/team/members', {
+    params: competitionId ? { competitionId } : undefined
+  });
   return data;
 }
 

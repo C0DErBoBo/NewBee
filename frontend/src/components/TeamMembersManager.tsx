@@ -110,13 +110,6 @@ export function TeamMembersManager({
   const isModal = variant === 'modal';
   const isVisible = isModal ? Boolean(open) : true;
 
-  const queryClient = useQueryClient();
-  const membersQuery = useQuery({
-    queryKey: ['team-members'],
-    queryFn: fetchTeamMembers,
-    enabled: isVisible
-  });
-
   const [membersDraft, setMembersDraft] = useState<TeamMember[]>([]);
   const [bulkInputVisible, setBulkInputVisible] = useState(false);
   const [bulkInput, setBulkInput] = useState('');
@@ -127,6 +120,20 @@ export function TeamMembersManager({
   const [invalidGroups, setInvalidGroups] = useState<Record<number, boolean>>({});
   const [invalidEvents, setInvalidEvents] = useState<Record<string, boolean>>({});
 
+  const queryClient = useQueryClient();
+  const competitionOptions = useMemo(() => competitions ?? [], [competitions]);
+
+  const [selectedCompetitionId, setSelectedCompetitionId] = useState<string | null>(
+    initialCompetitionId ?? competitionOptions[0]?.id ?? null
+  );
+
+  const membersQuery = useQuery({
+    queryKey: ['team-members', selectedCompetitionId],
+    queryFn: () => fetchTeamMembers(selectedCompetitionId),
+    enabled: isVisible && Boolean(selectedCompetitionId),
+    keepPreviousData: false
+  });
+
   const handleDropdownFocus = useCallback(() => {
     setActiveDropdowns((count) => count + 1);
   }, []);
@@ -136,12 +143,6 @@ export function TeamMembersManager({
       setActiveDropdowns((count) => Math.max(count - 1, 0));
     }, 0);
   }, []);
-
-  const competitionOptions = useMemo(() => competitions ?? [], [competitions]);
-
-  const [selectedCompetitionId, setSelectedCompetitionId] = useState<string | null>(
-    initialCompetitionId ?? competitionOptions[0]?.id ?? null
-  );
 
   useEffect(() => {
     if (!isVisible) return;
@@ -163,10 +164,19 @@ useEffect(() => {
 }, [selectedCompetitionId, isVisible]);
 
 useEffect(() => {
+  if (!isVisible) return;
+  if (!selectedCompetitionId) {
+    setMembersDraft([]);
+    return;
+  }
   if (membersQuery.data) {
     setMembersDraft(normalizeMembers(membersQuery.data.members ?? []));
+    return;
   }
-}, [membersQuery.data]);
+  if (!membersQuery.isFetching) {
+    setMembersDraft([]);
+  }
+}, [isVisible, selectedCompetitionId, membersQuery.data, membersQuery.isFetching]);
 
 useEffect(() => {
   if (!isVisible) return;
@@ -276,25 +286,27 @@ useEffect(() => {
     selectedCompetitionId
   ]);
 const updateMutation = useMutation({
-    mutationFn: ({ members, competitionId }: { members: TeamMember[]; competitionId: string }) =>
-      updateTeamMembers(members, competitionId),
-    onSuccess: (data) => {
-      queryClient.setQueryData(['team-members'], data);
-      queryClient.invalidateQueries({ queryKey: ['dashboard-competitions'] });
-      queryClient.invalidateQueries({ queryKey: ['registrations'] });
-      setMembersDraft(normalizeMembers(data.members));
-      setBulkInput('');
-      setParseError(null);
-      setSaveError(null);
-      setBulkInputVisible(false);
-      if (isModal) {
-        onClose?.();
-      }
-    },
-    onError: (error: unknown) => {
-      setSaveError(error instanceof Error ? error.message : '保存失败，请稍后重试。');
+  mutationFn: ({ members, competitionId }: { members: TeamMember[]; competitionId: string }) =>
+    updateTeamMembers(members, competitionId),
+  onSuccess: (data, variables) => {
+    const cacheKey = ['team-members', variables.competitionId] as const;
+    queryClient.setQueryData(cacheKey, data);
+    queryClient.invalidateQueries({ queryKey: ['team-members'], exact: false });
+    queryClient.invalidateQueries({ queryKey: ['dashboard-competitions'] });
+    queryClient.invalidateQueries({ queryKey: ['registrations'] });
+    setMembersDraft(normalizeMembers(data.members));
+    setBulkInput('');
+    setParseError(null);
+    setSaveError(null);
+    setBulkInputVisible(false);
+    if (isModal) {
+      onClose?.();
     }
-  });
+  },
+  onError: (error: unknown) => {
+    setSaveError(error instanceof Error ? error.message : '保存失败，请稍后重试。');
+  }
+});
 
   const isLoading = membersQuery.isLoading;
   const isSaving = updateMutation.isPending;
@@ -525,7 +537,7 @@ const updateMutation = useMutation({
             variant="outline"
             size="sm"
             onClick={() => membersQuery.refetch()}
-            disabled={membersQuery.isFetching}
+            disabled={!selectedCompetitionId || membersQuery.isFetching}
           >
             {membersQuery.isFetching ? '刷新中...' : '刷新数据'}
           </Button>
