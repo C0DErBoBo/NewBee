@@ -1,4 +1,4 @@
-﻿import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2, Plus, X } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -1002,14 +1002,13 @@ useEffect(() => {
                     extraRem: selectExtraSpaceRem
                   }
                 );
-                const trimmedGroupNameForRow = member.group?.trim() ?? '';
                 const invalidGroupLabel =
-                  groupHasError && trimmedGroupNameForRow ? `${trimmedGroupNameForRow}����Ч��` : trimmedGroupNameForRow || null;
+                  groupHasError && member.group ? `${member.group}（无效）` : member.group || null;
                 const groupWidth = getAdaptiveWidth(
                   [
-                    trimmedGroupNameForRow || '未选择',
+                    member.group || '未选择',
                     '未选择',
-                    (invalidGroupLabel ?? trimmedGroupNameForRow) || null,
+                    invalidGroupLabel ?? member.group ?? null,
                     ...groupOptions.map((group) => group?.name ?? '')
                   ],
                   { min: 10, max: 30, padding: 4, extraRem: selectExtraSpaceRem }
@@ -1022,25 +1021,11 @@ useEffect(() => {
                   'h-9 w-auto rounded-md border border-input bg-background text-sm text-center';
                 const hasSelectedEvents = Boolean(member.events?.some((event) => event?.name));
                 const isRegistered = Boolean(member.registered);
-                const normalizedGender = member.gender?.trim() ?? '';
-                const genderHasError =
-                  Boolean(normalizedGender) && !genders.includes(normalizedGender);
-                const memberHasInvalidEvent = (member.events ?? []).some((_, eventIndex) =>
-                  Boolean(invalidEvents[`${memberIndex}-${eventIndex}`])
-                );
-                const hasInvalidSelection = genderHasError || groupHasError || memberHasInvalidEvent;
-                const genderSelected = Boolean(normalizedGender);
-                const groupSelected = Boolean(trimmedGroupNameForRow);
-                const eventsValidAndSelected = hasSelectedEvents && !memberHasInvalidEvent;
-                const hasAllValidSelections =
-                  genderSelected && groupSelected && eventsValidAndSelected && !hasInvalidSelection;
                 const rowTone = isRegistered
                   ? 'bg-emerald-400/70'
-                  : hasInvalidSelection
-                    ? ''
-                    : hasAllValidSelections
-                      ? 'bg-yellow-400/60'
-                      : '';
+                  : hasSelectedEvents
+                    ? 'bg-orange-400/70'
+                    : '';
                 const normalizedName = member.name.trim().toLowerCase();
                 const historyRecords = historyMap.get(normalizedName) ?? [];
                 const formattedHistory = historyRecords.map((record) => ({
@@ -1150,9 +1135,9 @@ useEffect(() => {
                           .filter((name): name is string => Boolean(name))
                       );
                       const currentEventName = event.name?.trim() ?? '';
+                      const trimmedGroupName = member.group?.trim() ?? '';
                       const normalizedGroupName = normalizeName(member.group);
-                      const isGroupValid =
-                        Boolean(trimmedGroupNameForRow) && validGroupNames.has(trimmedGroupNameForRow);
+                      const isGroupValid = Boolean(trimmedGroupName) && validGroupNames.has(trimmedGroupName);
                       const allowedEventsForGroup = (() => {
                         if (!normalizedGroupName) {
                           return new Set<string>([...validEventNames]);
@@ -1172,9 +1157,6 @@ useEffect(() => {
                         if (!optionName) return false;
                         if (previousSelectedNames.has(optionName) && optionName !== currentEventName) {
                           return false;
-                        }
-                        if (!isGroupValid) {
-                          return optionName === currentEventName;
                         }
                         if (allowedEventsForGroup.size > 0 && !allowedEventsForGroup.has(optionName)) {
                           return false;
@@ -1420,8 +1402,6 @@ useEffect(() => {
     </Card>
   );
 }
-
-
 
 
 
