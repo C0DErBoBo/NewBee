@@ -2,8 +2,10 @@ import { apiClient } from '@/lib/axios';
 
 export interface CompetitionEventInput {
   name: string;
-  category: 'track' | 'field';
+  category: 'track' | 'field' | 'all_round' | 'fun' | 'score';
   unitType: 'individual' | 'team';
+  competitionMode?: 'lane' | 'mass';
+  scoringType?: 'timing' | 'distance' | 'height';
   isCustom?: boolean;
   config?: Record<string, unknown>;
 }

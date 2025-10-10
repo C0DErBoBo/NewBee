@@ -596,7 +596,19 @@ useEffect(() => {
 
     const hasSelectedEvents = target.events?.some((event) => event?.name);
     if (!hasSelectedEvents) {
-      setSaveError('请先为该队员选择至少一个参赛项目。');
+      setSaveError('请至少为该队员选择一个参赛项目。');
+      return;
+    }
+
+    if (!target.gender?.trim()) {
+      setSaveError('请完善队员的性别信息后再提交。');
+      return;
+    }
+
+    const hasInvalidGroup = Boolean(target.group?.trim()) && Boolean(invalidGroups[index]);
+    const hasInvalidEvent = Object.keys(invalidEvents).some((key) => key.startsWith(`${index}-`));
+    if (hasInvalidGroup || hasInvalidEvent) {
+      setSaveError('存在无效的组别或项目，请先修正后再提交。');
       return;
     }
 
@@ -676,6 +688,16 @@ useEffect(() => {
       return;
     }
 
+    if (validMembers.some((member) => !member.gender?.trim())) {
+      setSaveError('请完善所有队员的性别信息后再保存。');
+      return;
+    }
+
+    if (Object.keys(invalidGroups).length > 0 || Object.keys(invalidEvents).length > 0) {
+      setSaveError('存在无效的组别或项目，请先修正后再保存。');
+      return;
+    }
+
     if (validMembers.length < cleaned.length) {
       setSaveError('部分队员未选择项目，已跳过录入。');
     } else {
@@ -684,6 +706,7 @@ useEffect(() => {
 
     updateMutation.mutate({ members: cleaned, competitionId: selectedCompetitionId });
   };
+
 
   const handleClose = () => {
     setBulkInputVisible(false);
@@ -1207,8 +1230,3 @@ useEffect(() => {
     </Card>
   );
 }
-
-
-
-
-

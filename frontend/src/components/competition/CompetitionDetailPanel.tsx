@@ -73,6 +73,26 @@ const defaultRegistrationConfig: Record<string, unknown> = {
   requireRealName: true
 };
 
+const defaultCompetitionModeForCategory = (category: CompetitionEventInput['category']): 'lane' | 'mass' => (category === 'track' ? 'lane' : 'mass');
+
+const defaultScoringTypeForCategory = (category: CompetitionEventInput['category']): CompetitionEventInput['scoringType'] => {
+  switch (category) {
+    case 'track':
+      return 'timing';
+    case 'field':
+      return 'distance';
+    case 'all_round':
+      return 'timing';
+    case 'fun':
+      return 'distance';
+    case 'score':
+      return 'distance';
+    default:
+      return 'distance';
+  }
+};
+
+
 const toInputDateTime = (value?: string) => {
   if (!value) return "";
   const date = new Date(value);
@@ -113,6 +133,8 @@ const mapDetailToEditable = (detail: CompetitionDetail): EditableCompetition => 
     name: event.name,
     category: event.category,
     unitType: event.unitType,
+    competitionMode: event.competitionMode ?? defaultCompetitionModeForCategory(event.category),
+    scoringType: event.scoringType ?? defaultScoringTypeForCategory(event.category),
     isCustom: event.isCustom,
     config: event.config
   })),
@@ -240,31 +262,45 @@ export function CompetitionDetailPanel({
 
       return updateCompetition(competitionId, {
         name: draft.basic.name,
-        location: draft.basic.location || undefined,
+        location: draft.basic.location.trim() || undefined,
         signupStartAt: toIsoString(draft.basic.signupStartAt)!,
         signupEndAt: toIsoString(draft.basic.signupEndAt)!,
         startAt: toIsoString(draft.basic.startAt),
         endAt: toIsoString(draft.basic.endAt),
         events: draft.events
-          .filter((event) => event.name.trim())
-          .map(({ name, category, unitType, isCustom, config }) => ({
-            name,
-            category,
-            unitType,
-            isCustom,
-            config
-          })),
+          .map(({ name, category, unitType, competitionMode, scoringType, isCustom, config }) => {
+            const trimmedName = name.trim();
+            return {
+              name: trimmedName,
+              category,
+              unitType,
+              competitionMode: competitionMode ?? defaultCompetitionModeForCategory(category),
+              scoringType: scoringType ?? defaultScoringTypeForCategory(category),
+              isCustom,
+              config: config ?? {}
+            };
+          })
+          .filter((event) => event.name.length > 0),
         groups: draft.groups
-          .filter((group) => group.name.trim())
-          .map(({ name, gender, ageBracket, identityType, maxParticipants, teamSize, config }) => ({
-            name,
-            gender,
-            ageBracket,
-            identityType,
-            maxParticipants,
-            teamSize,
-            config
-          })),
+          .map(({ name, gender, ageBracket, identityType, maxParticipants, teamSize, config }) => {
+            const trimmedName = name.trim();
+            return {
+              name: trimmedName,
+              gender,
+              ageBracket: ageBracket?.trim() || undefined,
+              identityType: identityType?.trim() || undefined,
+              maxParticipants:
+                typeof maxParticipants === "number" && Number.isFinite(maxParticipants)
+                  ? maxParticipants
+                  : undefined,
+              teamSize:
+                typeof teamSize === "number" && Number.isFinite(teamSize)
+                  ? teamSize
+                  : undefined,
+              config: config ?? {}
+            };
+          })
+          .filter((group) => group.name.length > 0),
         rules: draft.rules,
         config: {
           ...(competition?.config ?? {}),
@@ -354,6 +390,23 @@ export function CompetitionDetailPanel({
     });
   };
 
+  const handleEventCategoryChange = (index: number, category: EditableEvent['category']) => {
+    setDraft((prev) => {
+      if (!prev) return prev;
+      const nextEvents = prev.events.map((event, idx) => {
+        if (idx !== index) return event;
+        return {
+          ...event,
+          category,
+          competitionMode: defaultCompetitionModeForCategory(category),
+          scoringType: defaultScoringTypeForCategory(category)
+        };
+      });
+      setHasPendingChanges(true);
+      return { ...prev, events: nextEvents };
+    });
+  };
+
   const handleGroupChange = <K extends keyof EditableGroup>(index: number, key: K, value: EditableGroup[K]) => {
     setDraft((prev) => {
       if (!prev) return prev;
@@ -414,6 +467,8 @@ export function CompetitionDetailPanel({
             name: "",
             category: "track",
             unitType: "individual",
+            competitionMode: defaultCompetitionModeForCategory("track"),
+            scoringType: defaultScoringTypeForCategory("track"),
             isCustom: true
           }
         ]
@@ -577,7 +632,7 @@ export function CompetitionDetailPanel({
               ) : (
                 draft.events.map((event, index) => (
                   <div key={event.id ?? index} className="space-y-3 rounded-md border border-dashed border-border p-4">
-                    <div className="grid gap-3 md:grid-cols-2">
+                    <div className="grid gap-3 md:grid-cols-5">
                       <div className="space-y-2">
                         <Label>项目名称</Label>
                         <Input
@@ -591,10 +646,13 @@ export function CompetitionDetailPanel({
                         <select
                           className="h-9 rounded-md border border-input bg-background px-3 text-sm"
                           value={event.category}
-                          onChange={(evt) => handleEventChange(index, "category", evt.target.value as EditableEvent["category"])}
+                          onChange={(evt) => handleEventCategoryChange(index, evt.target.value as EditableEvent['category'])}
                         >
                           <option value="track">径赛</option>
                           <option value="field">田赛</option>
+                          <option value="all_round">全能类</option>
+                          <option value="fun">趣味类</option>
+                          <option value="score">评分类</option>
                         </select>
                       </div>
                       <div className="space-y-2">
@@ -602,10 +660,45 @@ export function CompetitionDetailPanel({
                         <select
                           className="h-9 rounded-md border border-input bg-background px-3 text-sm"
                           value={event.unitType}
-                          onChange={(evt) => handleEventChange(index, "unitType", evt.target.value as EditableEvent["unitType"])}
+                          onChange={(evt) => handleEventChange(index, "unitType", evt.target.value as EditableEvent['unitType'])}
                         >
                           <option value="individual">个人</option>
                           <option value="team">团体</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>赛道模式</Label>
+                        <select
+                          className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                          value={event.competitionMode ?? defaultCompetitionModeForCategory(event.category)}
+                          onChange={(evt) =>
+                            handleEventChange(
+                              index,
+                              "competitionMode",
+                              evt.target.value as NonNullable<EditableEvent['competitionMode']>
+                            )
+                          }
+                        >
+                          <option value="lane">分道跑</option>
+                          <option value="mass">不分道跑</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>计分类型</Label>
+                        <select
+                          className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                          value={event.scoringType ?? defaultScoringTypeForCategory(event.category)}
+                          onChange={(evt) =>
+                            handleEventChange(
+                              index,
+                              "scoringType",
+                              evt.target.value as NonNullable<EditableEvent['scoringType']>
+                            )
+                          }
+                        >
+                          <option value="timing">计时类</option>
+                          <option value="distance">远度类</option>
+                          <option value="height">高度类</option>
                         </select>
                       </div>
                     </div>
