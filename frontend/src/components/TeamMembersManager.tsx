@@ -532,6 +532,8 @@ useEffect(() => {
 
     return { globalEvents, eventsByGroupName };
   }, [eventOptions, groupIdToNameMap]);
+
+  const requiresGroup = groupOptions.length > 0;
   const eventVisibility = useMemo(() => {
     const visibility = Array.from({ length: 5 }, () => false);
     visibility[0] = true;
@@ -545,16 +547,20 @@ useEffect(() => {
     const nextInvalidEvents: Record<string, boolean> = {};
 
     membersDraft.forEach((member, memberIndex) => {
+      const trimmedGroupName = member.group?.trim() ?? '';
       const groupNameRaw = normalizeName(member.group);
-      const originalGroupName = member.group?.trim();
-      if (groupNameRaw && validGroupNames.size > 0 && (!originalGroupName || !validGroupNames.has(originalGroupName))) {
+
+      if (requiresGroup) {
+        if (!trimmedGroupName) {
+          nextInvalidGroups[memberIndex] = true;
+        } else if (!validGroupNames.has(trimmedGroupName)) {
+          nextInvalidGroups[memberIndex] = true;
+        }
+      } else if (trimmedGroupName && !validGroupNames.has(trimmedGroupName)) {
         nextInvalidGroups[memberIndex] = true;
       }
 
-      const isGroupValid =
-        Boolean(groupNameRaw) &&
-        Boolean(originalGroupName) &&
-        validGroupNames.has(originalGroupName);
+      const isGroupValid = Boolean(trimmedGroupName) && validGroupNames.has(trimmedGroupName);
 
       const allowedEventsForGroup = groupNameRaw
         ? isGroupValid
@@ -567,7 +573,9 @@ useEffect(() => {
               return set;
             })()
           : new Set<string>()
-        : new Set<string>([...validEventNames]);
+        : requiresGroup
+          ? new Set<string>()
+          : new Set<string>([...validEventNames]);
 
       member.events?.forEach((event, eventIndex) => {
         const eventName = normalizeName(event.name);
@@ -606,7 +614,7 @@ useEffect(() => {
       }
       return nextInvalidEvents;
     });
-  }, [membersDraft, validGroupNames, validEventNames, eventAvailability]);
+  }, [membersDraft, requiresGroup, validGroupNames, validEventNames, eventAvailability]);
 
   useEffect(() => {
     if (
@@ -739,7 +747,16 @@ useEffect(() => {
       return;
     }
 
-    const hasInvalidGroup = Boolean(target.group?.trim()) && Boolean(invalidGroups[index]);
+    const trimmedGroupName = target.group?.trim() ?? '';
+    const requiresGroupForRegistration = groupOptions.length > 0;
+    if (requiresGroupForRegistration && !trimmedGroupName) {
+      setSaveError('请先为该队员选择有效组别再报名。');
+      return;
+    }
+
+    const hasInvalidGroup = requiresGroupForRegistration
+      ? Boolean(invalidGroups[index])
+      : Boolean(trimmedGroupName) && Boolean(invalidGroups[index]);
     const hasInvalidEvent = Object.keys(invalidEvents).some((key) => key.startsWith(`${index}-`));
     if (hasInvalidGroup || hasInvalidEvent) {
       setSaveError('存在无效的组别或项目，请先修正后再提交。');
@@ -762,7 +779,7 @@ useEffect(() => {
         const newRecord: MemberHistoryEntry = {
           submittedAt: new Date().toISOString(),
           events: eventLabels.length ? eventLabels.join('，') : '—',
-          group: target.group ?? null,
+          group: trimmedGroupName || null,
           statusLabel: '已报名'
         };
         return {
@@ -824,6 +841,11 @@ useEffect(() => {
 
     if (validMembers.some((member) => !member.gender?.trim())) {
       setSaveError('请完善所有队员的性别信息后再保存。');
+      return;
+    }
+
+    if (requiresGroup && validMembers.some((member) => !member.group?.trim())) {
+      setSaveError('请为所有队员选择组别后再保存。');
       return;
     }
 
@@ -1155,6 +1177,9 @@ useEffect(() => {
                         Boolean(trimmedGroupNameForRow) && validGroupNames.has(trimmedGroupNameForRow);
                       const allowedEventsForGroup = (() => {
                         if (!normalizedGroupName) {
+                          if (requiresGroup) {
+                            return new Set<string>();
+                          }
                           return new Set<string>([...validEventNames]);
                         }
                         if (!isGroupValid) {
@@ -1420,6 +1445,7 @@ useEffect(() => {
     </Card>
   );
 }
+
 
 
 
