@@ -12,6 +12,7 @@ export interface CompetitionEventInput {
 }
 
 export interface CompetitionGroupInput {
+  id?: string;
   name: string;
   gender: 'male' | 'female' | 'mixed';
   ageBracket?: string;

@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Card,
@@ -100,6 +100,13 @@ const defaultScoringTypeForCategory = (category: CompetitionEventInput['category
   }
 };
 
+const createTempId = () => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `temp-${crypto.randomUUID()}`;
+  }
+  return `temp-${Math.random().toString(36).slice(2)}-${Date.now()}`;
+};
+
 
 const toInputDateTime = (value?: string) => {
   if (!value) return "";
@@ -127,53 +134,97 @@ const safeJsonParse = <T,>(value: string, fallback: T): { data: T; error: string
   }
 };
 
-const mapDetailToEditable = (detail: CompetitionDetail): EditableCompetition => ({
-  basic: {
-    name: detail.name,
-    location: detail.location ?? "",
-    signupStartAt: toInputDateTime(detail.signupStartAt),
-    signupEndAt: toInputDateTime(detail.signupEndAt),
-    startAt: toInputDateTime(detail.startAt),
-    endAt: toInputDateTime(detail.endAt)
-  },
-  events: detail.events.map((event) => {
-    const baseConfig = event.config ?? {};
-    const assignedGroups =
-      Array.isArray(event.groupIds) && event.groupIds.length
-        ? event.groupIds
-        : Array.isArray((baseConfig as { assignedGroups?: unknown }).assignedGroups)
-          ? ((baseConfig as { assignedGroups?: unknown }).assignedGroups as unknown[]).filter(
-              (value): value is string => typeof value === "string"
-            )
-          : [];
-    return {
-      id: event.id,
-      name: event.name,
-      category: event.category,
-      unitType: event.unitType,
-      competitionMode: event.competitionMode ?? defaultCompetitionModeForCategory(event.category),
-      scoringType: event.scoringType ?? defaultScoringTypeForCategory(event.category),
-      isCustom: event.isCustom,
-      groupIds: assignedGroups,
-      config: { ...baseConfig, assignedGroups }
-    };
-  }),
-  groups: detail.groups.map((group) => ({
-    id: group.id,
-    name: group.name,
-    gender: group.gender,
-    ageBracket: group.ageBracket,
-    identityType: group.identityType,
-    maxParticipants: group.maxParticipants,
-    teamSize: group.teamSize,
-    config: group.config
-  })),
-  rules: detail.rules ? deepClone(detail.rules) : deepClone(defaultRules),
-  registration: (detail.config?.registration ?? deepClone(defaultRegistrationConfig)) as Record<
-    string,
-    unknown
-  >
-});
+const mapDetailToEditable = (detail: CompetitionDetail): EditableCompetition => {
+  const groupIdToName = new Map(
+    detail.groups.map((group) => [group.id ?? "", (group.name ?? "").trim()])
+  );
+  const groupNameToId = new Map(
+    detail.groups
+      .map((group) => [(group.name ?? "").trim(), group.id ?? ""] as const)
+      .filter(([name, id]) => name.length > 0 && id.length > 0)
+  );
+
+  return {
+    basic: {
+      name: detail.name,
+      location: detail.location ?? "",
+      signupStartAt: toInputDateTime(detail.signupStartAt),
+      signupEndAt: toInputDateTime(detail.signupEndAt),
+      startAt: toInputDateTime(detail.startAt),
+      endAt: toInputDateTime(detail.endAt)
+    },
+    events: detail.events.map((event) => {
+      const baseConfig = event.config ?? {};
+      const directGroupIds = Array.isArray(event.groupIds)
+        ? (event.groupIds as unknown[]).filter(
+            (value): value is string => typeof value === "string" && value.length > 0
+          )
+        : [];
+      const configGroupIds = Array.isArray(
+        (baseConfig as { assignedGroups?: unknown }).assignedGroups
+      )
+        ? ((baseConfig as { assignedGroups?: unknown }).assignedGroups as unknown[]).filter(
+            (value): value is string => typeof value === "string" && value.length > 0
+          )
+        : [];
+      const configGroupNames = Array.isArray(
+        (baseConfig as { assignedGroupNames?: unknown }).assignedGroupNames
+      )
+        ? ((baseConfig as { assignedGroupNames?: unknown }).assignedGroupNames as unknown[]).filter(
+            (value): value is string => typeof value === "string" && value.trim().length > 0
+          )
+        : [];
+
+      const initialIds = Array.from(new Set([...directGroupIds, ...configGroupIds]));
+      let resolvedGroupIds = initialIds.filter((id) => groupIdToName.has(id));
+
+      if (resolvedGroupIds.length === 0 && configGroupNames.length > 0) {
+        const fallbackIds = configGroupNames
+          .map((name) => groupNameToId.get(name.trim()))
+          .filter((value): value is string => typeof value === "string" && value.length > 0);
+        if (fallbackIds.length > 0) {
+          resolvedGroupIds = Array.from(new Set(fallbackIds));
+        }
+      }
+
+      const resolvedGroupNames = resolvedGroupIds
+        .map((id) => groupIdToName.get(id)?.trim())
+        .filter((name): name is string => Boolean(name) && name.length > 0);
+
+      return {
+        id: event.id,
+        name: event.name,
+        category: event.category,
+        unitType: event.unitType,
+        competitionMode: event.competitionMode ?? defaultCompetitionModeForCategory(event.category),
+        scoringType: event.scoringType ?? defaultScoringTypeForCategory(event.category),
+        isCustom: event.isCustom,
+        groupIds: resolvedGroupIds,
+        config: {
+          ...baseConfig,
+          assignedGroups: resolvedGroupIds,
+          assignedGroupNames:
+            resolvedGroupNames.length > 0 ? resolvedGroupNames : configGroupNames ?? []
+        }
+      };
+    }),
+    groups: detail.groups.map((group) => ({
+      id: group.id,
+      name: group.name,
+      gender: group.gender,
+      ageBracket: group.ageBracket,
+      identityType: group.identityType,
+      maxParticipants: group.maxParticipants,
+      teamSize: group.teamSize,
+      config: group.config
+    })),
+    rules: detail.rules ? deepClone(detail.rules) : deepClone(defaultRules),
+    registration: (detail.config?.registration ?? deepClone(defaultRegistrationConfig)) as Record<
+      string,
+      unknown
+    >
+  };
+};
 
 export function CompetitionDetailPanel({
   competitionId,
@@ -190,6 +241,7 @@ export function CompetitionDetailPanel({
   });
 
   const competition = detailQuery.data;
+  const competitionUpdatedAt = detailQuery.dataUpdatedAt;
 
   const [activeTab, setActiveTab] = useState<DetailTab>("basic");
   const [draft, setDraft] = useState<EditableCompetition | null>(null);
@@ -210,6 +262,7 @@ export function CompetitionDetailPanel({
   const [eventModalOpen, setEventModalOpen] = useState(false);
   const [eventModalDraft, setEventModalDraft] = useState<EditableEvent | null>(null);
   const [eventModalError, setEventModalError] = useState<string | null>(null);
+  const lastSyncedCompetitionId = useRef<string | null>(null);
 
   const groupOptions = useMemo(() => {
     if (!draft) return [] as Array<{ id: string; name: string }>;
@@ -260,6 +313,9 @@ export function CompetitionDetailPanel({
 
   useEffect(() => {
     if (!competition) return;
+    const competitionIdValue = competition.id ?? null;
+    const isSameCompetition = lastSyncedCompetitionId.current === competitionIdValue;
+    lastSyncedCompetitionId.current = competitionIdValue;
     const editable = mapDetailToEditable(competition);
     setDraft(editable);
     setOriginal(deepClone(editable));
@@ -272,8 +328,10 @@ export function CompetitionDetailPanel({
     setRegistrationText(JSON.stringify(editable.registration, null, 2));
     setRegistrationError(null);
     setHasPendingChanges(false);
-    setActiveTab("basic");
-  }, [competition]);
+    if (!isSameCompetition) {
+      setActiveTab("basic");
+    }
+  }, [competition, competitionUpdatedAt]);
 
   const changeSummary = useMemo(() => {
     if (!draft || !original) return [] as string[];
@@ -340,9 +398,13 @@ export function CompetitionDetailPanel({
         events: draft.events
           .map(({ name, category, unitType, competitionMode, scoringType, isCustom, config, groupIds }) => {
             const trimmedName = name.trim();
-            const selectedGroupIds = Array.isArray(groupIds)
+            const selectedGroupIdList = Array.isArray(groupIds)
               ? groupIds.filter((value) => value.length > 0)
               : [];
+            const persistedGroupIds = selectedGroupIdList.filter((value) => !value.startsWith("temp-"));
+            const selectedGroupNames = selectedGroupIdList
+              .map((value) => groupIdToNameMap.get(value)?.trim())
+              .filter((value): value is string => Boolean(value) && value.length > 0);
             return {
               name: trimmedName,
               category,
@@ -350,15 +412,22 @@ export function CompetitionDetailPanel({
               competitionMode: competitionMode ?? defaultCompetitionModeForCategory(category),
               scoringType: scoringType ?? defaultScoringTypeForCategory(category),
               isCustom,
-              groupIds: selectedGroupIds,
-              config: { ...(config ?? {}), assignedGroups: selectedGroupIds }
+              groupIds: persistedGroupIds,
+              config: {
+                ...(config ?? {}),
+                assignedGroups: persistedGroupIds,
+                assignedGroupNames: selectedGroupNames
+              }
             };
           })
           .filter((event) => event.name.length > 0),
         groups: draft.groups
-          .map(({ name, gender, ageBracket, identityType, maxParticipants, teamSize, config }) => {
+          .map(({ id, name, gender, ageBracket, identityType, maxParticipants, teamSize, config }) => {
             const trimmedName = name.trim();
+            const normalizedId =
+              typeof id === "string" && !id.startsWith("temp-") && id.length > 0 ? id : undefined;
             return {
+              id: normalizedId,
               name: trimmedName,
               gender,
               ageBracket: ageBracket?.trim() || undefined,
@@ -1034,11 +1103,11 @@ export function CompetitionDetailPanel({
                       {groupOptions.length > 0 ? (
                         (event.groupIds ?? []).length ? (
                           <p className="text-xs text-muted-foreground">
-                            已选择：
+                            已选择
                             {(event.groupIds ?? []).map((id) => groupIdToNameMap.get(id) ?? "未知组别").join("、")}
                           </p>
                         ) : (
-                          <p className="text-xs text-muted-foreground">未选择时默认适用于全部组别。</p>
+                          <p className="text-xs font-semibold text-red-600">未添加到任何组别。</p>
                         )
                       ) : null}
                     </div>

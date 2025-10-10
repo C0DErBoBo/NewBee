@@ -42,14 +42,14 @@ const standardEvents = [
     scoringType: 'timing'
   },
   {
-    name: '4x100m 鎺ュ姏',
+    name: '4x100m 接力',
     category: 'track',
     unitType: 'team',
     competitionMode: 'lane',
     scoringType: 'timing'
   },
   {
-    name: '璺宠繙',
+    name: '跳远',
     category: 'field',
     unitType: 'individual',
     competitionMode: 'mass',
@@ -63,21 +63,20 @@ const standardEvents = [
     scoringType: 'distance'
   },
   {
-    name: '閾呯悆',
+    name: '铅球',
     category: 'field',
     unitType: 'individual',
     competitionMode: 'mass',
     scoringType: 'distance'
   },
   {
-    name: '閾侀ゼ',
+    name: '铁饼',
     category: 'field',
     unitType: 'individual',
     competitionMode: 'mass',
     scoringType: 'distance'
   }
 ];
-
 const eventSchema = z.object({
   name: z.string().min(1),
   category: z.enum(['track', 'field', 'all_round', 'fun', 'score']),
@@ -112,6 +111,7 @@ const defaultScoringTypeForCategory = (category: string) => {
 
 
 const groupSchema = z.object({
+  id: z.string().uuid().optional(),
   name: z.string().min(1),
   gender: z.enum(['male', 'female', 'mixed']),
   ageBracket: z.string().optional(),
@@ -382,23 +382,44 @@ competitionRouter.post(
 
       if (payload.groups?.length) {
         for (const group of payload.groups) {
-          await client.query(
-            `
-              INSERT INTO competition_groups
-                (competition_id, name, gender, age_bracket, identity_type, max_participants, team_size, config)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            `,
-            [
-              competitionId,
-              group.name,
-              group.gender,
-              group.ageBracket ?? null,
-              group.identityType ?? null,
-              group.maxParticipants ?? null,
-              group.teamSize ?? null,
-              group.config ?? {}
-            ]
-          );
+          if (group.id) {
+            await client.query(
+              `
+                INSERT INTO competition_groups
+                  (id, competition_id, name, gender, age_bracket, identity_type, max_participants, team_size, config)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+              `,
+              [
+                group.id,
+                competitionId,
+                group.name,
+                group.gender,
+                group.ageBracket ?? null,
+                group.identityType ?? null,
+                group.maxParticipants ?? null,
+                group.teamSize ?? null,
+                group.config ?? {}
+              ]
+            );
+          } else {
+            await client.query(
+              `
+                INSERT INTO competition_groups
+                  (competition_id, name, gender, age_bracket, identity_type, max_participants, team_size, config)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+              `,
+              [
+                competitionId,
+                group.name,
+                group.gender,
+                group.ageBracket ?? null,
+                group.identityType ?? null,
+                group.maxParticipants ?? null,
+                group.teamSize ?? null,
+                group.config ?? {}
+              ]
+            );
+          }
         }
       }
 
@@ -654,7 +675,7 @@ competitionRouter.patch(
       );
 
       if (existing.rowCount === 0) {
-        return res.status(404).json({ message: '项目不存在' });
+        return res.status(404).json({ message: '赛事不存在' });
       }
 
       const current = existing.rows[0];
@@ -729,7 +750,7 @@ competitionRouter.delete(
       );
 
       if (rowCount === 0) {
-        return res.status(404).json({ message: '项目不存在' });
+        return res.status(404).json({ message: '赛事不存在' });
       }
 
       res.status(204).send();
@@ -813,7 +834,7 @@ competitionRouter.patch(
       );
 
       if (rowCount === 0) {
-        return res.status(404).json({ message: '分组不存在' });
+        return res.status(404).json({ message: '赛事不存在' });
       }
 
       res.json({ group: rows[0] });
@@ -841,7 +862,7 @@ competitionRouter.delete(
       );
 
       if (rowCount === 0) {
-        return res.status(404).json({ message: '分组不存在' });
+        return res.status(404).json({ message: '赛事不存在' });
       }
 
       res.status(204).send();
@@ -887,5 +908,9 @@ competitionRouter.put(
 );
 
 export { competitionRouter };
+
+
+
+
 
 

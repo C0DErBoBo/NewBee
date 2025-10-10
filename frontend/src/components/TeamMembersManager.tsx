@@ -131,6 +131,27 @@ function getAdaptiveWidth(
   return extraRem > 0 ? `calc(${clampValue} + ${extraRem}rem)` : clampValue;
 }
 
+function isShallowEqualBooleanRecord(
+  a: Record<string, boolean>,
+  b: Record<string, boolean>
+) {
+  if (a === b) {
+    return true;
+  }
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) {
+    return false;
+  }
+  for (let i = 0; i < aKeys.length; i += 1) {
+    const key = aKeys[i];
+    if (a[key] !== b[key]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function TeamMembersManager(props: TeamMembersManagerProps) {
   const user = useAppSelector((state) => state.auth.user);
   const isTeamRole = user?.role === 'team';
@@ -475,8 +496,21 @@ useEffect(() => {
       });
     });
 
-    setInvalidGroups(nextInvalidGroups);
-    setInvalidEvents(nextInvalidEvents);
+    setInvalidGroups((prev) => {
+      const prevRecord = prev as unknown as Record<string, boolean>;
+      const nextRecord = nextInvalidGroups as unknown as Record<string, boolean>;
+      if (isShallowEqualBooleanRecord(prevRecord, nextRecord)) {
+        return prev;
+      }
+      return nextInvalidGroups;
+    });
+
+    setInvalidEvents((prev) => {
+      if (isShallowEqualBooleanRecord(prev, nextInvalidEvents)) {
+        return prev;
+      }
+      return nextInvalidEvents;
+    });
   }, [membersDraft, validGroupNames, validEventNames]);
 
   useEffect(() => {
