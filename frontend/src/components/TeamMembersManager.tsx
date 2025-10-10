@@ -131,7 +131,18 @@ function getAdaptiveWidth(
   return extraRem > 0 ? `calc(${clampValue} + ${extraRem}rem)` : clampValue;
 }
 
-export function TeamMembersManager({
+export function TeamMembersManager(props: TeamMembersManagerProps) {
+  const user = useAppSelector((state) => state.auth.user);
+  const isTeamRole = user?.role === 'team';
+
+  if (!isTeamRole) {
+    return null;
+  }
+
+  return <TeamMembersManagerContent {...props} />;
+}
+
+function TeamMembersManagerContent({
   competitions,
   variant = 'page',
   open,
@@ -141,16 +152,10 @@ export function TeamMembersManager({
   selectedCompetitionOverview,
   onCompetitionChange
 }: TeamMembersManagerProps) {
-  const user = useAppSelector((state) => state.auth.user);
-  const isTeamRole = user?.role === 'team';
   const basePaddingRem = 0.25;
   const selectArrowReserveRem = 1.75;
   const inputExtraSpaceRem = 1;
   const selectExtraSpaceRem = selectArrowReserveRem + 0.75;
-
-  if (!isTeamRole) {
-    return null;
-  }
 
   const isModal = variant === 'modal';
   const isVisible = isModal ? Boolean(open) : true;

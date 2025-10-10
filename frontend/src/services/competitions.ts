@@ -7,6 +7,7 @@ export interface CompetitionEventInput {
   competitionMode?: 'lane' | 'mass';
   scoringType?: 'timing' | 'distance' | 'height';
   isCustom?: boolean;
+  groupIds?: string[];
   config?: Record<string, unknown>;
 }
 

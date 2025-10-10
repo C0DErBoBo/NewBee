@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { z } from 'zod';
 import { pool } from '../database/client';
 import { authGuard, AuthenticatedRequest } from '../middleware/authGuard';
@@ -42,35 +42,35 @@ const standardEvents = [
     scoringType: 'timing'
   },
   {
-    name: '4x100m 接力',
+    name: '4x100m 鎺ュ姏',
     category: 'track',
     unitType: 'team',
     competitionMode: 'lane',
     scoringType: 'timing'
   },
   {
-    name: '跳远',
+    name: '璺宠繙',
     category: 'field',
     unitType: 'individual',
     competitionMode: 'mass',
     scoringType: 'distance'
   },
   {
-    name: '三级跳',
+    name: '三级跳远',
     category: 'field',
     unitType: 'individual',
     competitionMode: 'mass',
     scoringType: 'distance'
   },
   {
-    name: '铅球',
+    name: '閾呯悆',
     category: 'field',
     unitType: 'individual',
     competitionMode: 'mass',
     scoringType: 'distance'
   },
   {
-    name: '铁饼',
+    name: '閾侀ゼ',
     category: 'field',
     unitType: 'individual',
     competitionMode: 'mass',
@@ -85,6 +85,7 @@ const eventSchema = z.object({
   competitionMode: z.enum(['lane', 'mass']).optional(),
   scoringType: z.enum(['timing', 'distance', 'height']).optional(),
   isCustom: z.boolean().default(false).optional(),
+  groupIds: z.array(z.string().uuid()).optional(),
   config: z.record(z.unknown()).default({}).optional()
 });
 
@@ -886,3 +887,5 @@ competitionRouter.put(
 );
 
 export { competitionRouter };
+
+

@@ -14,6 +14,14 @@ import { Label } from "../ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Textarea } from "../ui/textarea";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from "../ui/dialog";
+import {
   CompetitionDetail,
   CompetitionEventInput,
   CompetitionGroupInput,
@@ -35,7 +43,7 @@ type DetailTab = "basic" | "events" | "groups" | "rules" | "registration";
 
 type RulesKey = keyof CompetitionRuleInput;
 
-type EditableEvent = CompetitionEventInput & { id?: string };
+type EditableEvent = CompetitionEventInput & { id?: string; groupIds: string[] };
 type EditableGroup = CompetitionGroupInput & { id?: string };
 
 interface EditableCompetition {
@@ -128,16 +136,28 @@ const mapDetailToEditable = (detail: CompetitionDetail): EditableCompetition => 
     startAt: toInputDateTime(detail.startAt),
     endAt: toInputDateTime(detail.endAt)
   },
-  events: detail.events.map((event) => ({
-    id: event.id,
-    name: event.name,
-    category: event.category,
-    unitType: event.unitType,
-    competitionMode: event.competitionMode ?? defaultCompetitionModeForCategory(event.category),
-    scoringType: event.scoringType ?? defaultScoringTypeForCategory(event.category),
-    isCustom: event.isCustom,
-    config: event.config
-  })),
+  events: detail.events.map((event) => {
+    const baseConfig = event.config ?? {};
+    const assignedGroups =
+      Array.isArray(event.groupIds) && event.groupIds.length
+        ? event.groupIds
+        : Array.isArray((baseConfig as { assignedGroups?: unknown }).assignedGroups)
+          ? ((baseConfig as { assignedGroups?: unknown }).assignedGroups as unknown[]).filter(
+              (value): value is string => typeof value === "string"
+            )
+          : [];
+    return {
+      id: event.id,
+      name: event.name,
+      category: event.category,
+      unitType: event.unitType,
+      competitionMode: event.competitionMode ?? defaultCompetitionModeForCategory(event.category),
+      scoringType: event.scoringType ?? defaultScoringTypeForCategory(event.category),
+      isCustom: event.isCustom,
+      groupIds: assignedGroups,
+      config: { ...baseConfig, assignedGroups }
+    };
+  }),
   groups: detail.groups.map((group) => ({
     id: group.id,
     name: group.name,
@@ -187,6 +207,56 @@ export function CompetitionDetailPanel({
   const [registrationText, setRegistrationText] = useState("");
   const [registrationError, setRegistrationError] = useState<string | null>(null);
   const [hasPendingChanges, setHasPendingChanges] = useState(false);
+  const [eventModalOpen, setEventModalOpen] = useState(false);
+  const [eventModalDraft, setEventModalDraft] = useState<EditableEvent | null>(null);
+  const [eventModalError, setEventModalError] = useState<string | null>(null);
+
+  const groupOptions = useMemo(() => {
+    if (!draft) return [] as Array<{ id: string; name: string }>;
+    return draft.groups
+      .map((group, index) => ({
+        id: group.id ?? "",
+        name: group.name.trim() || `未命名组别${index + 1}`
+      }))
+      .filter((option) => option.id.length > 0);
+  }, [draft]);
+
+  const groupIdToNameMap = useMemo(
+    () => new Map(groupOptions.map((option) => [option.id, option.name])),
+    [groupOptions]
+  );
+
+  const eventsGroupedById = useMemo(() => {
+    if (!draft) return new Map<string, EditableEvent[]>();
+    const map = new Map<string, EditableEvent[]>();
+    const groups = draft.groups;
+    groups.forEach((group) => {
+      if (group.id) {
+        map.set(group.id, []);
+      }
+    });
+    draft.events.forEach((event) => {
+      const assigned = Array.isArray(event.groupIds) ? event.groupIds : [];
+      if (assigned.length === 0) {
+        groups.forEach((group) => {
+          if (group.id) {
+            const list = map.get(group.id);
+            if (list) {
+              list.push(event);
+            }
+          }
+        });
+      } else {
+        assigned.forEach((groupId) => {
+          const list = map.get(groupId);
+          if (list) {
+            list.push(event);
+          }
+        });
+      }
+    });
+    return map;
+  }, [draft]);
 
   useEffect(() => {
     if (!competition) return;
@@ -268,8 +338,11 @@ export function CompetitionDetailPanel({
         startAt: toIsoString(draft.basic.startAt),
         endAt: toIsoString(draft.basic.endAt),
         events: draft.events
-          .map(({ name, category, unitType, competitionMode, scoringType, isCustom, config }) => {
+          .map(({ name, category, unitType, competitionMode, scoringType, isCustom, config, groupIds }) => {
             const trimmedName = name.trim();
+            const selectedGroupIds = Array.isArray(groupIds)
+              ? groupIds.filter((value) => value.length > 0)
+              : [];
             return {
               name: trimmedName,
               category,
@@ -277,7 +350,8 @@ export function CompetitionDetailPanel({
               competitionMode: competitionMode ?? defaultCompetitionModeForCategory(category),
               scoringType: scoringType ?? defaultScoringTypeForCategory(category),
               isCustom,
-              config: config ?? {}
+              groupIds: selectedGroupIds,
+              config: { ...(config ?? {}), assignedGroups: selectedGroupIds }
             };
           })
           .filter((event) => event.name.length > 0),
@@ -407,6 +481,102 @@ export function CompetitionDetailPanel({
     });
   };
 
+  const handleEventGroupToggle = (eventIndex: number, groupId: string, checked: boolean) => {
+    setDraft((prev) => {
+      if (!prev) return prev;
+      const nextEvents = prev.events.map((event, idx) => {
+        if (idx !== eventIndex) return event;
+        const currentGroupIds = Array.isArray(event.groupIds) ? event.groupIds : [];
+        const nextGroupIds = checked
+          ? Array.from(new Set([...currentGroupIds, groupId]))
+          : currentGroupIds.filter((value) => value !== groupId);
+        return { ...event, groupIds: nextGroupIds };
+      });
+      setHasPendingChanges(true);
+      return { ...prev, events: nextEvents };
+    });
+  };
+
+  const buildEventDraft = (groupIds: string[]): EditableEvent => ({
+    id: undefined,
+    name: "",
+    category: "track",
+    unitType: "individual",
+    competitionMode: defaultCompetitionModeForCategory("track"),
+    scoringType: defaultScoringTypeForCategory("track"),
+    isCustom: false,
+    groupIds,
+    config: {}
+  });
+
+  const openEventModalWithGroups = (groupIds: string[]) => {
+    setEventModalDraft(buildEventDraft(groupIds));
+    setEventModalError(null);
+    setEventModalOpen(true);
+  };
+
+  const closeEventModal = () => {
+    setEventModalOpen(false);
+    setEventModalDraft(null);
+    setEventModalError(null);
+  };
+
+  const updateEventModalDraft = <K extends keyof EditableEvent>(key: K, value: EditableEvent[K]) => {
+    setEventModalDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
+  };
+
+  const toggleEventModalGroup = (groupId: string, checked: boolean) => {
+    setEventModalDraft((prev) => {
+      if (!prev) return prev;
+      const currentGroupIds = Array.isArray(prev.groupIds) ? prev.groupIds : [];
+      const nextGroupIds = checked
+        ? Array.from(new Set([...currentGroupIds, groupId]))
+        : currentGroupIds.filter((value) => value !== groupId);
+      return { ...prev, groupIds: nextGroupIds };
+    });
+  };
+
+  const handleEventModalSubmit = () => {
+    if (!eventModalDraft) return;
+    const trimmedName = eventModalDraft.name.trim();
+    if (!trimmedName) {
+      setEventModalError("请输入项目名称");
+      return;
+    }
+
+    const selectedGroupIds = Array.isArray(eventModalDraft.groupIds)
+      ? eventModalDraft.groupIds.filter((value) => value.length > 0)
+      : [];
+    if ((draft?.groups.length ?? 0) > 0 && selectedGroupIds.length === 0) {
+      setEventModalError("请至少选择一个适用组别");
+      return;
+    }
+
+    setDraft((prev) => {
+      if (!prev) return prev;
+      setHasPendingChanges(true);
+      return {
+        ...prev,
+        events: [
+          ...prev.events,
+          {
+            id: undefined,
+            name: trimmedName,
+            category: eventModalDraft.category,
+            unitType: eventModalDraft.unitType,
+            competitionMode: eventModalDraft.competitionMode,
+            scoringType: eventModalDraft.scoringType,
+            isCustom: eventModalDraft.isCustom ?? false,
+            groupIds: selectedGroupIds,
+            config: eventModalDraft.config ?? {}
+          }
+        ]
+      };
+    });
+
+    closeEventModal();
+  };
+
   const handleGroupChange = <K extends keyof EditableGroup>(index: number, key: K, value: EditableGroup[K]) => {
     setDraft((prev) => {
       if (!prev) return prev;
@@ -456,24 +626,16 @@ export function CompetitionDetailPanel({
   };
 
   const handleAddEvent = () => {
-    setDraft((prev) => {
-      if (!prev) return prev;
-      setHasPendingChanges(true);
-      return {
-        ...prev,
-        events: [
-          ...prev.events,
-          {
-            name: "",
-            category: "track",
-            unitType: "individual",
-            competitionMode: defaultCompetitionModeForCategory("track"),
-            scoringType: defaultScoringTypeForCategory("track"),
-            isCustom: true
-          }
-        ]
-      };
-    });
+    const availableGroupIds =
+      draft?.groups.map((group) => group.id ?? "").filter((value) => value.length > 0) ?? [];
+    openEventModalWithGroups(availableGroupIds);
+  };
+
+  const handleAddEventForGroup = (groupId: string) => {
+    if (!groupId) {
+      return;
+    }
+    openEventModalWithGroups([groupId]);
   };
 
   const handleRemoveEvent = (index: number) => {
@@ -496,6 +658,7 @@ export function CompetitionDetailPanel({
         groups: [
           ...prev.groups,
           {
+            id: createTempId(),
             name: "",
             gender: "mixed",
             ageBracket: "",
@@ -512,8 +675,17 @@ export function CompetitionDetailPanel({
     setDraft((prev) => {
       if (!prev) return prev;
       setHasPendingChanges(true);
+      const groupToRemove = prev.groups[index];
+      const removedGroupId = groupToRemove?.id ?? null;
       return {
         ...prev,
+        events:
+          removedGroupId !== null
+            ? prev.events.map((event) => ({
+                ...event,
+                groupIds: (event.groupIds ?? []).filter((groupId) => groupId !== removedGroupId)
+              }))
+            : prev.events,
         groups: prev.groups.filter((_, idx) => idx !== index)
       };
     });
@@ -522,7 +694,134 @@ export function CompetitionDetailPanel({
   const canSave = hasPendingChanges && !hasErrors && !updateMutation.isPending;
 
   return (
-    <Card className="border border-border">
+    <>
+      <Dialog open={eventModalOpen} onOpenChange={(open) => { if (!open) closeEventModal(); }}>
+        {eventModalDraft ? (
+          <DialogContent className="sm:max-w-[560px]">
+            <DialogHeader>
+              <DialogTitle>新增项目</DialogTitle>
+              <DialogDescription>配置项目基础信息，并选择适用的参赛组别。</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="event-modal-name">项目名称</Label>
+                  <Input
+                    id="event-modal-name"
+                    value={eventModalDraft.name}
+                    onChange={(event) => updateEventModalDraft("name", event.target.value)}
+                    placeholder="例如：100 米"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="event-modal-category">项目类型</Label>
+                  <select
+                    id="event-modal-category"
+                    className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                    value={eventModalDraft.category}
+                    onChange={(event) =>
+                      updateEventModalDraft("category", event.target.value as EditableEvent["category"])
+                    }
+                  >
+                    <option value="track">径赛</option>
+                    <option value="field">田赛</option>
+                    <option value="all_round">全能</option>
+                    <option value="fun">趣味</option>
+                    <option value="score">评分类</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="event-modal-unit">赛制</Label>
+                  <select
+                    id="event-modal-unit"
+                    className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                    value={eventModalDraft.unitType}
+                    onChange={(event) =>
+                      updateEventModalDraft("unitType", event.target.value as EditableEvent["unitType"])
+                    }
+                  >
+                    <option value="individual">个人</option>
+                    <option value="team">团体</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="event-modal-mode">竞赛模式</Label>
+                  <select
+                    id="event-modal-mode"
+                    className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                    value={
+                      eventModalDraft.competitionMode ?? defaultCompetitionModeForCategory(eventModalDraft.category)
+                    }
+                    onChange={(event) =>
+                      updateEventModalDraft(
+                        "competitionMode",
+                        event.target.value as NonNullable<EditableEvent["competitionMode"]>
+                      )
+                    }
+                  >
+                    <option value="lane">分道</option>
+                    <option value="mass">不分道</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="event-modal-scoring">计分方式</Label>
+                  <select
+                    id="event-modal-scoring"
+                    className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                    value={
+                      eventModalDraft.scoringType ?? defaultScoringTypeForCategory(eventModalDraft.category)
+                    }
+                    onChange={(event) =>
+                      updateEventModalDraft(
+                        "scoringType",
+                        event.target.value as NonNullable<EditableEvent["scoringType"]>
+                      )
+                    }
+                  >
+                    <option value="timing">计时</option>
+                    <option value="distance">距离</option>
+                    <option value="height">高度</option>
+                  </select>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>适用组别</Label>
+                {groupOptions.length ? (
+                  <div className="flex flex-wrap gap-2">
+                    {groupOptions.map((option) => {
+                      const checked = (eventModalDraft.groupIds ?? []).includes(option.id);
+                      return (
+                        <label
+                          key={option.id}
+                          className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm"
+                        >
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border border-input"
+                            checked={checked}
+                            onChange={(event) => toggleEventModalGroup(option.id, event.target.checked)}
+                          />
+                          <span>{option.name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">尚未配置组别，可先在"组别设置"内新增。</p>
+                )}
+              </div>
+            </div>
+            {eventModalError && <p className="text-xs text-destructive">{eventModalError}</p>}
+            <DialogFooter>
+              <Button variant="outline" onClick={closeEventModal}>
+                取消
+              </Button>
+              <Button onClick={handleEventModalSubmit}>确认添加</Button>
+            </DialogFooter>
+          </DialogContent>
+        ) : null}
+      </Dialog>
+      <Card className="border border-border">
       <CardHeader className="space-y-4">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
@@ -622,7 +921,12 @@ export function CompetitionDetailPanel({
           <TabsContent value="events" className="space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium">项目列表</h3>
-              <Button variant="outline" size="sm" onClick={handleAddEvent}>
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-emerald-200 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 hover:text-emerald-900"
+                onClick={handleAddEvent}
+              >
                 新增项目
               </Button>
             </div>
@@ -702,6 +1006,43 @@ export function CompetitionDetailPanel({
                         </select>
                       </div>
                     </div>
+                    <div className="space-y-2">
+                      <Label>适用组别</Label>
+                      {groupOptions.length ? (
+                        <div className="flex flex-wrap gap-2">
+                          {groupOptions.map((option) => {
+                            const checked = (event.groupIds ?? []).includes(option.id);
+                            return (
+                              <label
+                                key={`${event.id ?? index}-${option.id}`}
+                                className="flex items-center gap-1 rounded-md border border-input px-2 py-1 text-xs"
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="h-3 w-3"
+                                  checked={checked}
+                                  onChange={(evt) => handleEventGroupToggle(index, option.id, evt.target.checked)}
+                                />
+                                <span>{option.name}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">尚未配置组别，本项目默认对全部组别生效。</p>
+                      )}
+                      {groupOptions.length > 0 ? (
+                        (event.groupIds ?? []).length ? (
+                          <p className="text-xs text-muted-foreground">
+                            已选择：
+                            {(event.groupIds ?? []).map((id) => groupIdToNameMap.get(id) ?? "未知组别").join("、")}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">未选择时默认适用于全部组别。</p>
+                        )
+                      ) : null}
+                    </div>
+
                     <div className="flex justify-end">
                       <Button variant="ghost" size="sm" className="text-destructive" onClick={() => handleRemoveEvent(index)}>
                         删除项目
@@ -724,72 +1065,110 @@ export function CompetitionDetailPanel({
               {draft.groups.length === 0 ? (
                 <p className="text-sm text-muted-foreground">尚未配置组别，点击“新增组别”进行设置。</p>
               ) : (
-                draft.groups.map((group, index) => (
-                  <div key={group.id ?? index} className="space-y-3 rounded-md border border-dashed border-border p-4">
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <div className="space-y-2">
-                        <Label>组别名称</Label>
-                        <Input
-                          value={group.name}
-                          placeholder="例如：男子甲组"
-                          onChange={(evt) => handleGroupChange(index, "name", evt.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>性别限制</Label>
-                        <select
-                          className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                          value={group.gender}
-                          onChange={(evt) => handleGroupChange(index, "gender", evt.target.value as EditableGroup["gender"])}
+                draft.groups.map((group, index) => {
+                  const groupId = group.id ?? '';
+                  const eventsForGroup =
+                    groupId && eventsGroupedById.has(groupId)
+                      ? eventsGroupedById.get(groupId) ?? []
+                      : [];
+                  return (
+                    <div key={groupId || index} className="space-y-3 rounded-md border border-dashed border-border p-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium">组别信息</span>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => (groupId ? handleAddEventForGroup(groupId) : openEventModalWithGroups([]))}
+                          disabled={!groupId}
                         >
-                          <option value="male">男子</option>
-                          <option value="female">女子</option>
-                          <option value="mixed">混合</option>
-                        </select>
+                          新增项目
+                        </Button>
                       </div>
-                      <div className="space-y-2">
-                        <Label>年龄段</Label>
-                        <Input
-                          value={group.ageBracket ?? ""}
-                          placeholder="例如：18-25"
-                          onChange={(evt) => handleGroupChange(index, "ageBracket", evt.target.value || undefined)}
-                        />
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label>组别名称</Label>
+                          <Input
+                            value={group.name}
+                            placeholder="例如：男子甲组"
+                            onChange={(evt) => handleGroupChange(index, 'name', evt.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>性别</Label>
+                          <select
+                            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                            value={group.gender}
+                            onChange={(evt) => handleGroupChange(index, 'gender', evt.target.value as EditableGroup['gender'])}
+                          >
+                            <option value="male">男子</option>
+                            <option value="female">女子</option>
+                            <option value="mixed">混合</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>年龄段</Label>
+                          <Input
+                            value={group.ageBracket ?? ''}
+                            placeholder="例如：18-25"
+                            onChange={(evt) => handleGroupChange(index, 'ageBracket', evt.target.value || undefined)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>身份类型</Label>
+                          <Input
+                            value={group.identityType ?? ''}
+                            placeholder="例如：学生 / 教师"
+                            onChange={(evt) => handleGroupChange(index, 'identityType', evt.target.value || undefined)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>参赛人数上限</Label>
+                          <Input
+                            type="number"
+                            value={group.maxParticipants ?? ''}
+                            min={0}
+                            onChange={(evt) => handleGroupChange(index, 'maxParticipants', evt.target.value ? Number(evt.target.value) : undefined)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>团队人数</Label>
+                          <Input
+                            type="number"
+                            value={group.teamSize ?? ''}
+                            min={0}
+                            onChange={(evt) => handleGroupChange(index, 'teamSize', evt.target.value ? Number(evt.target.value) : undefined)}
+                          />
+                        </div>
                       </div>
-                      <div className="space-y-2">
-                        <Label>身份类型</Label>
-                        <Input
-                          value={group.identityType ?? ""}
-                          placeholder="例如：学生 / 教师"
-                          onChange={(evt) => handleGroupChange(index, "identityType", evt.target.value || undefined)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>人数上限</Label>
-                        <Input
-                          type="number"
-                          value={group.maxParticipants ?? ""}
-                          min={0}
-                          onChange={(evt) => handleGroupChange(index, "maxParticipants", evt.target.value ? Number(evt.target.value) : undefined)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>团队人数</Label>
-                        <Input
-                          type="number"
-                          value={group.teamSize ?? ""}
-                          min={0}
-                          onChange={(evt) => handleGroupChange(index, "teamSize", evt.target.value ? Number(evt.target.value) : undefined)}
-                        />
+                      <div className="space-y-2 rounded-md border border-dashed border-border p-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium text-muted-foreground">关联项目</span>
+                          <Button
+                            variant="outline"
+                            size="xs"
+                            onClick={() => (groupId ? handleAddEventForGroup(groupId) : openEventModalWithGroups([]))}
+                            disabled={!groupId}
+                          >
+                            添加项目
+                          </Button>
+                        </div>
+                        {eventsForGroup.length ? (
+                          <div className="flex flex-wrap gap-2 text-xs">
+                            {eventsForGroup.map((event) => (
+                              <span key={(event.id ?? event.name) + groupId} className="rounded-full bg-muted px-2 py-1">
+                                {event.name}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">当前组别尚未关联项目。</p>
+                        )}
                       </div>
                     </div>
-                    <div className="flex justify-end">
-                      <Button variant="ghost" size="sm" className="text-destructive" onClick={() => handleRemoveGroup(index)}>
-                        删除组别
-                      </Button>
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
+
             </div>
           </TabsContent>
 
@@ -868,6 +1247,7 @@ export function CompetitionDetailPanel({
         </div>
       </CardFooter>
     </Card>
+    </>
   );
 }
 
@@ -895,3 +1275,14 @@ function renderGender(value: CompetitionDetail["groups"][number]["gender"]) {
 function SkeletonLine({ className }: { className?: string }) {
   return <div className={cn("h-4 animate-pulse rounded bg-muted", className)} />;
 }
+
+
+
+
+
+
+
+
+
+
+

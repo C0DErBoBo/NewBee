@@ -8,24 +8,104 @@ const authGuard_1 = require("../middleware/authGuard");
 const competitionRouter = (0, express_1.Router)();
 exports.competitionRouter = competitionRouter;
 const standardEvents = [
-    { name: '100m', category: 'track', unitType: 'individual' },
-    { name: '200m', category: 'track', unitType: 'individual' },
-    { name: '400m', category: 'track', unitType: 'individual' },
-    { name: '800m', category: 'track', unitType: 'individual' },
-    { name: '1500m', category: 'track', unitType: 'individual' },
-    { name: '4x100m 接力', category: 'track', unitType: 'team' },
-    { name: '跳远', category: 'field', unitType: 'individual' },
-    { name: '三级跳', category: 'field', unitType: 'individual' },
-    { name: '铅球', category: 'field', unitType: 'individual' },
-    { name: '铁饼', category: 'field', unitType: 'individual' }
+    {
+        name: '100m',
+        category: 'track',
+        unitType: 'individual',
+        competitionMode: 'lane',
+        scoringType: 'timing'
+    },
+    {
+        name: '200m',
+        category: 'track',
+        unitType: 'individual',
+        competitionMode: 'lane',
+        scoringType: 'timing'
+    },
+    {
+        name: '400m',
+        category: 'track',
+        unitType: 'individual',
+        competitionMode: 'lane',
+        scoringType: 'timing'
+    },
+    {
+        name: '800m',
+        category: 'track',
+        unitType: 'individual',
+        competitionMode: 'lane',
+        scoringType: 'timing'
+    },
+    {
+        name: '1500m',
+        category: 'track',
+        unitType: 'individual',
+        competitionMode: 'lane',
+        scoringType: 'timing'
+    },
+    {
+        name: '4x100m 鎺ュ姏',
+        category: 'track',
+        unitType: 'team',
+        competitionMode: 'lane',
+        scoringType: 'timing'
+    },
+    {
+        name: '璺宠繙',
+        category: 'field',
+        unitType: 'individual',
+        competitionMode: 'mass',
+        scoringType: 'distance'
+    },
+    {
+        name: '三级跳远',
+        category: 'field',
+        unitType: 'individual',
+        competitionMode: 'mass',
+        scoringType: 'distance'
+    },
+    {
+        name: '閾呯悆',
+        category: 'field',
+        unitType: 'individual',
+        competitionMode: 'mass',
+        scoringType: 'distance'
+    },
+    {
+        name: '閾侀ゼ',
+        category: 'field',
+        unitType: 'individual',
+        competitionMode: 'mass',
+        scoringType: 'distance'
+    }
 ];
 const eventSchema = zod_1.z.object({
     name: zod_1.z.string().min(1),
-    category: zod_1.z.enum(['track', 'field']),
+    category: zod_1.z.enum(['track', 'field', 'all_round', 'fun', 'score']),
     unitType: zod_1.z.enum(['individual', 'team']),
+    competitionMode: zod_1.z.enum(['lane', 'mass']).optional(),
+    scoringType: zod_1.z.enum(['timing', 'distance', 'height']).optional(),
     isCustom: zod_1.z.boolean().default(false).optional(),
+    groupIds: zod_1.z.array(zod_1.z.string().uuid()).optional(),
     config: zod_1.z.record(zod_1.z.unknown()).default({}).optional()
 });
+const defaultCompetitionModeForCategory = (category) => category === 'track' ? 'lane' : 'mass';
+const defaultScoringTypeForCategory = (category) => {
+    switch (category) {
+        case 'track':
+            return 'timing';
+        case 'field':
+            return 'distance';
+        case 'all_round':
+            return 'timing';
+        case 'fun':
+            return 'distance';
+        case 'score':
+            return 'distance';
+        default:
+            return 'distance';
+    }
+};
 const groupSchema = zod_1.z.object({
     name: zod_1.z.string().min(1),
     gender: zod_1.z.enum(['male', 'female', 'mixed']),
@@ -82,7 +162,7 @@ async function fetchCompetition(competitionId) {
     }
     const [eventsResult, groupsResult, rulesResult] = await Promise.all([
         client_1.pool.query(`
-        SELECT id, competition_id, name, category, unit_type, is_custom, config, created_at
+        SELECT id, competition_id, name, category, unit_type, competition_mode, scoring_type, is_custom, config, created_at
         FROM competition_events
         WHERE competition_id = $1
         ORDER BY created_at
@@ -120,6 +200,8 @@ async function fetchCompetition(competitionId) {
             name: row.name,
             category: row.category,
             unitType: row.unit_type,
+            competitionMode: row.competition_mode ?? defaultCompetitionModeForCategory(row.category),
+            scoringType: row.scoring_type ?? defaultScoringTypeForCategory(row.category),
             isCustom: row.is_custom,
             config: row.config ?? {},
             createdAt: row.created_at
@@ -235,13 +317,15 @@ competitionRouter.post('/', authGuard_1.authGuard, async (req, res, next) => {
         if (payload.events?.length) {
             for (const event of payload.events) {
                 await client.query(`
-              INSERT INTO competition_events (competition_id, name, category, unit_type, is_custom, config)
-              VALUES ($1, $2, $3, $4, $5, $6)
+              INSERT INTO competition_events (competition_id, name, category, unit_type, competition_mode, scoring_type, is_custom, config)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             `, [
                     competitionId,
                     event.name,
                     event.category,
                     event.unitType,
+                    event.competitionMode ?? defaultCompetitionModeForCategory(event.category),
+                    event.scoringType ?? defaultScoringTypeForCategory(event.category),
                     event.isCustom ?? false,
                     event.config ?? {}
                 ]);
@@ -341,18 +425,24 @@ competitionRouter.patch('/:competitionId', authGuard_1.authGuard, async (req, re
         }
         if (payload.events) {
             await client.query('DELETE FROM competition_events WHERE competition_id = $1', [competitionId]);
-            for (const event of payload.events) {
-                await client.query(`
-              INSERT INTO competition_events (competition_id, name, category, unit_type, is_custom, config)
-              VALUES ($1, $2, $3, $4, $5, $6)
-            `, [
-                    competitionId,
-                    event.name,
-                    event.category,
-                    event.unitType,
-                    event.isCustom ?? false,
-                    event.config ?? {}
-                ]);
+            if (payload.events.length) {
+                for (const event of payload.events) {
+                    const competitionMode = event.competitionMode ?? defaultCompetitionModeForCategory(event.category);
+                    const scoringType = event.scoringType ?? defaultScoringTypeForCategory(event.category);
+                    await client.query(`
+                INSERT INTO competition_events (competition_id, name, category, unit_type, competition_mode, scoring_type, is_custom, config)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+              `, [
+                        competitionId,
+                        event.name,
+                        event.category,
+                        event.unitType,
+                        competitionMode,
+                        scoringType,
+                        event.isCustom ?? false,
+                        event.config ?? {}
+                    ]);
+                }
             }
         }
         if (payload.groups) {
@@ -407,19 +497,36 @@ competitionRouter.post('/:competitionId/events', authGuard_1.authGuard, async (r
         const competitionId = zod_1.z.string().uuid().parse(req.params.competitionId);
         await ensureCompetitionOwnership(competitionId, req.user);
         const payload = eventSchema.parse(req.body);
+        const competitionMode = payload.competitionMode ?? defaultCompetitionModeForCategory(payload.category);
+        const scoringType = payload.scoringType ?? defaultScoringTypeForCategory(payload.category);
         const result = await client_1.pool.query(`
-        INSERT INTO competition_events (competition_id, name, category, unit_type, is_custom, config)
-          VALUES ($1, $2, $3, $4, $5, $6)
-          RETURNING id, competition_id, name, category, unit_type, is_custom, config, created_at
+          INSERT INTO competition_events (competition_id, name, category, unit_type, competition_mode, scoring_type, is_custom, config)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          RETURNING id, competition_id, name, category, unit_type, competition_mode, scoring_type, is_custom, config, created_at
         `, [
             competitionId,
             payload.name,
             payload.category,
             payload.unitType,
+            competitionMode,
+            scoringType,
             payload.isCustom ?? false,
             payload.config ?? {}
         ]);
-        res.status(201).json({ event: result.rows[0] });
+        res.status(201).json({
+            event: {
+                id: result.rows[0].id,
+                competitionId: result.rows[0].competition_id,
+                name: result.rows[0].name,
+                category: result.rows[0].category,
+                unitType: result.rows[0].unit_type,
+                competitionMode: result.rows[0].competition_mode ?? competitionMode,
+                scoringType: result.rows[0].scoring_type ?? scoringType,
+                isCustom: result.rows[0].is_custom,
+                config: result.rows[0].config ?? {},
+                createdAt: result.rows[0].created_at
+            }
+        });
     }
     catch (error) {
         next(error);
@@ -431,28 +538,56 @@ competitionRouter.patch('/:competitionId/events/:eventId', authGuard_1.authGuard
         await ensureCompetitionOwnership(competitionId, req.user);
         const eventId = zod_1.z.string().uuid().parse(req.params.eventId);
         const payload = eventSchema.partial().parse(req.body);
-        const { rowCount, rows } = await client_1.pool.query(`
+        const existing = await client_1.pool.query(`
+          SELECT name, category, unit_type, competition_mode, scoring_type, is_custom, config
+          FROM competition_events
+          WHERE id = $1 AND competition_id = $2
+          LIMIT 1
+        `, [eventId, competitionId]);
+        if (existing.rowCount === 0) {
+            return res.status(404).json({ message: '项目不存在' });
+        }
+        const current = existing.rows[0];
+        const nextCategory = (payload.category ?? current.category);
+        const competitionMode = payload.competitionMode ?? current.competition_mode ?? defaultCompetitionModeForCategory(nextCategory);
+        const scoringType = payload.scoringType ?? current.scoring_type ?? defaultScoringTypeForCategory(nextCategory);
+        const updateResult = await client_1.pool.query(`
           UPDATE competition_events
           SET name = COALESCE($3, name),
               category = COALESCE($4, category),
               unit_type = COALESCE($5, unit_type),
-              is_custom = COALESCE($6, is_custom),
-              config = COALESCE($7, config)
+              competition_mode = COALESCE($6, competition_mode),
+              scoring_type = COALESCE($7, scoring_type),
+              is_custom = COALESCE($8, is_custom),
+              config = COALESCE($9, config)
           WHERE id = $1 AND competition_id = $2
-          RETURNING id, competition_id, name, category, unit_type, is_custom, config, created_at
+          RETURNING id, competition_id, name, category, unit_type, competition_mode, scoring_type, is_custom, config, created_at
         `, [
             eventId,
             competitionId,
             payload.name ?? null,
             payload.category ?? null,
             payload.unitType ?? null,
+            competitionMode,
+            scoringType,
             payload.isCustom ?? null,
             payload.config ?? null
         ]);
-        if (rowCount === 0) {
-            return res.status(404).json({ message: '项目不存在' });
-        }
-        res.json({ event: rows[0] });
+        const updated = updateResult.rows[0];
+        res.json({
+            event: {
+                id: updated.id,
+                competitionId: updated.competition_id,
+                name: updated.name,
+                category: updated.category,
+                unitType: updated.unit_type,
+                competitionMode: updated.competition_mode ?? competitionMode,
+                scoringType: updated.scoring_type ?? scoringType,
+                isCustom: updated.is_custom,
+                config: updated.config ?? {},
+                createdAt: updated.created_at
+            }
+        });
     }
     catch (error) {
         next(error);

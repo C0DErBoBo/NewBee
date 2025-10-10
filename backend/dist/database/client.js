@@ -42,6 +42,8 @@ async function migrate() {
       name TEXT NOT NULL,
       category TEXT NOT NULL,
       unit_type TEXT NOT NULL,
+      competition_mode TEXT,
+      scoring_type TEXT,
       is_custom BOOLEAN NOT NULL DEFAULT FALSE,
       config JSONB NOT NULL DEFAULT '{}'::JSONB,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -167,6 +169,10 @@ async function migrate() {
     ALTER TABLE competitions
       ADD COLUMN IF NOT EXISTS signup_start_at TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS signup_end_at TIMESTAMPTZ;
+
+    ALTER TABLE competition_events
+      ADD COLUMN IF NOT EXISTS competition_mode TEXT,
+      ADD COLUMN IF NOT EXISTS scoring_type TEXT;
   `;
     await exports.pool.query(migrationSql);
 }
