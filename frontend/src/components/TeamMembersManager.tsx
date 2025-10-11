@@ -156,6 +156,85 @@ function normalizeName(value?: string | null) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function detectGroupGender(name: string): EditableGroup['gender'] | null {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const hasMale = trimmed.includes('男');
+  const hasFemale = trimmed.includes('女');
+  if (hasMale && !hasFemale) {
+    return 'male';
+  }
+  if (hasFemale && !hasMale) {
+    return 'female';
+  }
+  return null;
+}
+
+type EventAvailabilityMap = {
+  globalEvents: Set<string>;
+  eventsByGroupName: Map<string, Set<string>>;
+};
+
+type AllowedEventsForGroup = {
+  allowed: Set<string>;
+  enforce: boolean;
+};
+
+function resolveAllowedEventsForGroup(
+  normalizedGroupName: string,
+  isGroupValid: boolean,
+  requiresGroup: boolean,
+  validEventNames: Set<string>,
+  availability: EventAvailabilityMap
+): AllowedEventsForGroup {
+  const filterByValidNames = (source: Set<string>) => {
+    if (validEventNames.size === 0) {
+      return new Set<string>(Array.from(source));
+    }
+    const filtered = new Set<string>();
+    source.forEach((value) => {
+      if (validEventNames.has(value)) {
+        filtered.add(value);
+      }
+    });
+    return filtered;
+  };
+
+  if (!requiresGroup) {
+    if (!normalizedGroupName) {
+      return {
+        allowed: filterByValidNames(new Set<string>(Array.from(validEventNames))),
+        enforce: false
+      };
+    }
+    if (!isGroupValid) {
+      return { allowed: new Set<string>(), enforce: false };
+    }
+    const combined = new Set<string>();
+    availability.globalEvents.forEach((value) => combined.add(value));
+    const specific = availability.eventsByGroupName.get(normalizedGroupName);
+    if (specific) {
+      specific.forEach((value) => combined.add(value));
+    }
+    return {
+      allowed: filterByValidNames(combined),
+      enforce: false
+    };
+  }
+
+  if (!normalizedGroupName || !isGroupValid) {
+    return { allowed: new Set<string>(), enforce: true };
+  }
+
+  const specific = availability.eventsByGroupName.get(normalizedGroupName) ?? new Set<string>();
+  return {
+    allowed: filterByValidNames(new Set<string>(Array.from(specific))),
+    enforce: true
+  };
+}
+
 export function TeamMembersManager(props: TeamMembersManagerProps) {
   const user = useAppSelector((state) => state.auth.user);
   const isTeamRole = user?.role === 'team';
@@ -486,7 +565,7 @@ useEffect(() => {
     });
     return map;
   }, [groupOptions]);
-  const eventAvailability = useMemo(() => {
+  const eventAvailability = useMemo<EventAvailabilityMap>(() => {
     const globalEvents = new Set<string>();
     const eventsByGroupName = new Map<string, Set<string>>();
 
@@ -561,21 +640,8 @@ useEffect(() => {
       }
 
       const isGroupValid = Boolean(trimmedGroupName) && validGroupNames.has(trimmedGroupName);
-
-      const allowedEventsForGroup = groupNameRaw
-        ? isGroupValid
-          ? (() => {
-              const set = new Set<string>([...eventAvailability.globalEvents]);
-              const specific = eventAvailability.eventsByGroupName.get(groupNameRaw);
-              if (specific) {
-                specific.forEach((value) => set.add(value));
-              }
-              return set;
-            })()
-          : new Set<string>()
-        : requiresGroup
-          ? new Set<string>()
-          : new Set<string>([...validEventNames]);
+      const { allowed: allowedEventsForGroup, enforce: enforceAllowedEvents } =
+        resolveAllowedEventsForGroup(groupNameRaw, isGroupValid, requiresGroup, validEventNames, eventAvailability);
 
       member.events?.forEach((event, eventIndex) => {
         const eventName = normalizeName(event.name);
@@ -587,10 +653,8 @@ useEffect(() => {
         if (validEventNames.size > 0 && !validEventNames.has(eventName)) {
           isInvalid = true;
         }
-        if (!isInvalid && groupNameRaw) {
-          if (!allowedEventsForGroup.has(eventName)) {
-            isInvalid = true;
-          }
+        if (!isInvalid && enforceAllowedEvents && !allowedEventsForGroup.has(eventName)) {
+          isInvalid = true;
         }
 
         if (isInvalid) {
@@ -638,10 +702,12 @@ useEffect(() => {
       }
       const normalizedParsed = normalizeMembers(parsed);
       let hasInvalid = false;
-      if (validGroupNames.size > 0 || validEventNames.size > 0) {
+      if (validGroupNames.size > 0 || validEventNames.size > 0 || requiresGroup) {
         normalizedParsed.forEach((member) => {
           const groupName = member.group?.trim();
-          if (groupName && validGroupNames.size > 0 && !validGroupNames.has(groupName)) {
+          if (requiresGroup && !groupName) {
+            hasInvalid = true;
+          } else if (groupName && validGroupNames.size > 0 && !validGroupNames.has(groupName)) {
             hasInvalid = true;
           }
           member.events?.forEach((event) => {
@@ -748,13 +814,12 @@ useEffect(() => {
     }
 
     const trimmedGroupName = target.group?.trim() ?? '';
-    const requiresGroupForRegistration = groupOptions.length > 0;
-    if (requiresGroupForRegistration && !trimmedGroupName) {
+    if (requiresGroup && !trimmedGroupName) {
       setSaveError('请先为该队员选择有效组别再报名。');
       return;
     }
 
-    const hasInvalidGroup = requiresGroupForRegistration
+    const hasInvalidGroup = requiresGroup
       ? Boolean(invalidGroups[index])
       : Boolean(trimmedGroupName) && Boolean(invalidGroups[index]);
     const hasInvalidEvent = Object.keys(invalidEvents).some((key) => key.startsWith(`${index}-`));
@@ -1056,6 +1121,7 @@ useEffect(() => {
                 const eventsValidAndSelected = hasSelectedEvents && !memberHasInvalidEvent;
                 const hasAllValidSelections =
                   genderSelected && groupSelected && eventsValidAndSelected && !hasInvalidSelection;
+                const canRegister = hasSelectedEvents && !hasInvalidSelection && (!requiresGroup || groupSelected);
                 const rowTone = isRegistered
                   ? 'bg-emerald-400/70'
                   : hasInvalidSelection
@@ -1175,23 +1241,16 @@ useEffect(() => {
                       const normalizedGroupName = normalizeName(member.group);
                       const isGroupValid =
                         Boolean(trimmedGroupNameForRow) && validGroupNames.has(trimmedGroupNameForRow);
-                      const allowedEventsForGroup = (() => {
-                        if (!normalizedGroupName) {
-                          if (requiresGroup) {
-                            return new Set<string>();
-                          }
-                          return new Set<string>([...validEventNames]);
-                        }
-                        if (!isGroupValid) {
-                          return new Set<string>();
-                        }
-                        const set = new Set<string>([...eventAvailability.globalEvents]);
-                        const specific = eventAvailability.eventsByGroupName.get(normalizedGroupName);
-                        if (specific) {
-                          specific.forEach((value) => set.add(value));
-                        }
-                        return set;
-                      })();
+                      const {
+                        allowed: allowedEventsForGroup,
+                        enforce: enforceAllowedEvents
+                      } = resolveAllowedEventsForGroup(
+                        normalizedGroupName,
+                        isGroupValid,
+                        requiresGroup,
+                        validEventNames,
+                        eventAvailability
+                      );
                       const filteredEventOptions = eventOptions.filter((option) => {
                         const optionName = option?.name?.trim();
                         if (!optionName) return false;
@@ -1201,12 +1260,13 @@ useEffect(() => {
                         if (!isGroupValid) {
                           return optionName === currentEventName;
                         }
-                        if (allowedEventsForGroup.size > 0 && !allowedEventsForGroup.has(optionName)) {
+                        if (enforceAllowedEvents && !allowedEventsForGroup.has(optionName)) {
                           return false;
                         }
                         return validEventNames.size === 0 || validEventNames.has(optionName);
                       });
                       const noAvailableEvents =
+                        enforceAllowedEvents &&
                         isGroupValid &&
                         Boolean(normalizedGroupName) &&
                         filteredEventOptions.length === 0 &&
@@ -1267,14 +1327,14 @@ useEffect(() => {
                                     </option>
                                   ))}
                                 </select>
-                                {eventHasError && currentEventName && normalizedGroupName ? (
+                                {eventHasError && currentEventName && normalizedGroupName && enforceAllowedEvents ? (
                                   <p className="mt-1 text-xs font-semibold text-red-600">
-                                    {/* 当前组别不可选该项目 */}
+                                    {/* 当前组不可选择该项目，请在赛事配置中为该组关联可选项目。 */}
                                   </p>
                                 ) : null}
                                 {noAvailableEvents ? (
                                   <p className="mt-1 text-xs font-semibold text-red-600">
-                                    {/* 当前没有任何已选中的项目 */}
+                                    当前组没有可报名的项目，请先在赛事管理中为项目绑定组别。
                                   </p>
                                 ) : null}
                               </>
@@ -1333,7 +1393,7 @@ useEffect(() => {
                             'min-w-[72px]',
                             isRegistered
                               ? 'border-orange-500 text-orange-700 hover:bg-orange-50'
-                              : hasSelectedEvents
+                              : canRegister
                                 ? 'border-orange-400 text-orange-600 hover:bg-orange-50'
                                 : 'border-border text-muted-foreground cursor-not-allowed'
                           )}
@@ -1345,7 +1405,7 @@ useEffect(() => {
                           disabled={
                             isSaving ||
                             !selectedCompetitionId ||
-                            (!isRegistered && !hasSelectedEvents)
+                            (!isRegistered && !canRegister)
                           }
                         >
                           {isRegistered ? '撤销' : '报名'}

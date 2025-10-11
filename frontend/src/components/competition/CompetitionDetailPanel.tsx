@@ -45,6 +45,7 @@ type RulesKey = keyof CompetitionRuleInput;
 
 type EditableEvent = CompetitionEventInput & { id?: string; groupIds: string[] };
 type EditableGroup = CompetitionGroupInput & { id?: string };
+type GroupOption = { id: string; name: string; gender: EditableGroup["gender"] };
 
 interface EditableCompetition {
   basic: {
@@ -105,6 +106,20 @@ const createTempId = () => {
     return `temp-${crypto.randomUUID()}`;
   }
   return `temp-${Math.random().toString(36).slice(2)}-${Date.now()}`;
+};
+
+const detectGroupGender = (name: string): EditableGroup["gender"] | null => {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const hasMale = trimmed.includes("男");
+  const hasFemale = trimmed.includes("女");
+  if (hasMale && !hasFemale) {
+    return "male";
+  }
+  if (hasFemale && !hasMale) {
+    return "female";
+  }
+  return null;
 };
 
 
@@ -262,14 +277,18 @@ export function CompetitionDetailPanel({
   const [eventModalOpen, setEventModalOpen] = useState(false);
   const [eventModalDraft, setEventModalDraft] = useState<EditableEvent | null>(null);
   const [eventModalError, setEventModalError] = useState<string | null>(null);
+  const [groupModalOpen, setGroupModalOpen] = useState(false);
+  const [groupModalDraft, setGroupModalDraft] = useState<EditableGroup | null>(null);
+  const [groupModalError, setGroupModalError] = useState<string | null>(null);
   const lastSyncedCompetitionId = useRef<string | null>(null);
 
   const groupOptions = useMemo(() => {
-    if (!draft) return [] as Array<{ id: string; name: string }>;
+    if (!draft) return [] as GroupOption[];
     return draft.groups
       .map((group, index) => ({
         id: group.id ?? "",
-        name: group.name.trim() || `未命名组别${index + 1}`
+        name: group.name.trim() || `未命名组别${index + 1}`,
+        gender: group.gender ?? "mixed"
       }))
       .filter((option) => option.id.length > 0);
   }, [draft]);
@@ -278,6 +297,73 @@ export function CompetitionDetailPanel({
     () => new Map(groupOptions.map((option) => [option.id, option.name])),
     [groupOptions]
   );
+
+  const separatedGroupOptions = useMemo(() => {
+    const male: GroupOption[] = [];
+    const female: GroupOption[] = [];
+    groupOptions.forEach((option) => {
+      const genders =
+        option.gender === "female"
+          ? ["female"]
+          : option.gender === "male"
+            ? ["male"]
+            : (["male", "female"] as const);
+      genders.forEach((gender) => {
+        if (gender === "male") {
+          male.push(option);
+        } else {
+          female.push(option);
+        }
+      });
+    });
+    return { male, female };
+  }, [groupOptions]);
+
+  const renderGroupSelectionRows = (
+    selectedIds: string[],
+    onToggle: (groupId: string, checked: boolean) => void
+  ) => {
+    const rowConfigs: Array<{
+      key: "male" | "female";
+      label: string;
+      colorClass: string;
+      options: GroupOption[];
+    }> = [
+      { key: "male", label: "男子组", colorClass: "text-blue-600", options: separatedGroupOptions.male },
+      { key: "female", label: "女子组", colorClass: "text-red-600", options: separatedGroupOptions.female }
+    ];
+
+    return (
+      <div className="space-y-2">
+        {rowConfigs.map(({ key, label, colorClass, options }) => (
+          <div key={key} className="flex flex-wrap items-center gap-2">
+            <span className={cn("text-xs font-semibold", colorClass)}>{label}</span>
+            {options.length ? (
+              options.map((option) => {
+                const checked = selectedIds.includes(option.id);
+                return (
+                  <label
+                    key={`${option.id}-${key}`}
+                    className="flex items-center gap-1 rounded-md border border-input px-2 py-1 text-xs"
+                  >
+                    <input
+                      type="checkbox"
+                      className="h-3 w-3"
+                      checked={checked}
+                      onChange={(event) => onToggle(option.id, event.target.checked)}
+                    />
+                    <span className={colorClass}>{option.name}</span>
+                  </label>
+                );
+              })
+            ) : (
+              <span className="text-xs text-muted-foreground">暂无可选组别</span>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  };
 
   const eventsGroupedById = useMemo(() => {
     if (!draft) return new Map<string, EditableEvent[]>();
@@ -718,26 +804,91 @@ export function CompetitionDetailPanel({
     });
   };
 
-  const handleAddGroup = () => {
+  const openGroupModal = (initial?: EditableGroup) => {
+    setGroupModalDraft(
+      initial ?? {
+        id: createTempId(),
+        name: "",
+        gender: "mixed",
+        ageBracket: "",
+        identityType: "",
+        maxParticipants: undefined,
+        teamSize: undefined,
+        config: {}
+      }
+    );
+    setGroupModalError(null);
+    setGroupModalOpen(true);
+  };
+
+  const closeGroupModal = () => {
+    setGroupModalOpen(false);
+    setGroupModalDraft(null);
+    setGroupModalError(null);
+  };
+
+  const updateGroupModalDraft = <K extends keyof EditableGroup>(key: K, value: EditableGroup[K]) => {
+    setGroupModalDraft((prev) => {
+      if (!prev) return prev;
+      const nextDraft = { ...prev, [key]: value };
+      if (key === "name" && typeof value === "string") {
+        const previousAuto = detectGroupGender(prev.name ?? "");
+        const nextAuto = detectGroupGender(value);
+        const shouldAuto =
+          prev.gender === "mixed" || (previousAuto !== null && prev.gender === previousAuto);
+        if (nextAuto && shouldAuto) {
+          nextDraft.gender = nextAuto;
+        } else if (!nextAuto && previousAuto !== null && prev.gender === previousAuto) {
+          nextDraft.gender = "mixed";
+        }
+      }
+      return nextDraft;
+    });
+    if (key === "name" && typeof value === "string" && value.trim().length > 0) {
+      setGroupModalError(null);
+    }
+  };
+
+  const handleGroupModalSubmit = () => {
+    if (!groupModalDraft) return;
+    const trimmedName = groupModalDraft.name.trim();
+    if (!trimmedName) {
+      setGroupModalError("请填写组别名称");
+      return;
+    }
+
     setDraft((prev) => {
       if (!prev) return prev;
       setHasPendingChanges(true);
+      const trimmedAge = groupModalDraft.ageBracket?.trim() ?? "";
+      const trimmedIdentity = groupModalDraft.identityType?.trim() ?? "";
+      const finalGroup: EditableGroup = {
+        id: groupModalDraft.id ?? createTempId(),
+        name: trimmedName,
+        gender: groupModalDraft.gender,
+        ageBracket: trimmedAge,
+        identityType: trimmedIdentity,
+        maxParticipants:
+          typeof groupModalDraft.maxParticipants === "number" && Number.isFinite(groupModalDraft.maxParticipants)
+            ? groupModalDraft.maxParticipants
+            : undefined,
+        teamSize:
+          typeof groupModalDraft.teamSize === "number" && Number.isFinite(groupModalDraft.teamSize)
+            ? groupModalDraft.teamSize
+            : undefined,
+        config: groupModalDraft.config ?? {}
+      };
       return {
         ...prev,
-        groups: [
-          ...prev.groups,
-          {
-            id: createTempId(),
-            name: "",
-            gender: "mixed",
-            ageBracket: "",
-            identityType: "",
-            maxParticipants: undefined,
-            teamSize: undefined
-          }
-        ]
+        groups: [...prev.groups, finalGroup]
       };
     });
+
+    closeGroupModal();
+  };
+
+  const handleAddGroup = () => {
+    openGroupModal();
   };
 
   const handleRemoveGroup = (index: number) => {
@@ -761,9 +912,113 @@ export function CompetitionDetailPanel({
   };
 
   const canSave = hasPendingChanges && !hasErrors && !updateMutation.isPending;
+  const canSubmitGroupModal = groupModalDraft ? groupModalDraft.name.trim().length > 0 : false;
 
   return (
     <>
+      <Dialog open={groupModalOpen} onOpenChange={(open) => { if (!open) closeGroupModal(); }}>
+        {groupModalDraft ? (
+          <DialogContent className="sm:max-w-[480px]">
+            <DialogHeader>
+              <DialogTitle>新增组别</DialogTitle>
+              <DialogDescription>请填写组别基础信息，至少需要提供名称。</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="group-modal-name">组别名称</Label>
+                <Input
+                  id="group-modal-name"
+                  value={groupModalDraft.name}
+                  onChange={(event) => updateGroupModalDraft("name", event.target.value)}
+                  placeholder="例如：男子组 / 女子组 / 混合组"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="group-modal-gender">适用性别</Label>
+                <select
+                  id="group-modal-gender"
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  value={groupModalDraft.gender}
+                  onChange={(event) =>
+                    updateGroupModalDraft("gender", event.target.value as EditableGroup["gender"])
+                  }
+                >
+                  <option value="male">男子</option>
+                  <option value="female">女子</option>
+                  <option value="mixed">混合</option>
+                </select>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="group-modal-age">年龄段</Label>
+                  <Input
+                    id="group-modal-age"
+                    value={groupModalDraft.ageBracket ?? ""}
+                    onChange={(event) =>
+                      updateGroupModalDraft("ageBracket", event.target.value || "")
+                    }
+                    placeholder="例如：18-25"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="group-modal-identity">身份类型</Label>
+                  <Input
+                    id="group-modal-identity"
+                    value={groupModalDraft.identityType ?? ""}
+                    onChange={(event) =>
+                      updateGroupModalDraft("identityType", event.target.value || "")
+                    }
+                    placeholder="例如：学生 / 教师"
+                  />
+                </div>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="group-modal-max">人数上限</Label>
+                  <Input
+                    id="group-modal-max"
+                    type="number"
+                    value={groupModalDraft.maxParticipants ?? ""}
+                    min={0}
+                    onChange={(event) =>
+                      updateGroupModalDraft(
+                        "maxParticipants",
+                        event.target.value ? Number(event.target.value) : undefined
+                      )
+                    }
+                    placeholder="可选"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="group-modal-team">团队人数</Label>
+                  <Input
+                    id="group-modal-team"
+                    type="number"
+                    value={groupModalDraft.teamSize ?? ""}
+                    min={0}
+                    onChange={(event) =>
+                      updateGroupModalDraft(
+                        "teamSize",
+                        event.target.value ? Number(event.target.value) : undefined
+                      )
+                    }
+                    placeholder="可选"
+                  />
+                </div>
+              </div>
+            </div>
+            {groupModalError && <p className="text-xs text-destructive">{groupModalError}</p>}
+            <DialogFooter>
+              <Button variant="outline" onClick={closeGroupModal}>
+                取消
+              </Button>
+              <Button onClick={handleGroupModalSubmit} disabled={!canSubmitGroupModal}>
+                保存组别
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        ) : null}
+      </Dialog>
       <Dialog open={eventModalOpen} onOpenChange={(open) => { if (!open) closeEventModal(); }}>
         {eventModalDraft ? (
           <DialogContent className="sm:max-w-[560px]">
@@ -856,25 +1111,7 @@ export function CompetitionDetailPanel({
               <div className="space-y-2">
                 <Label>适用组别</Label>
                 {groupOptions.length ? (
-                  <div className="flex flex-wrap gap-2">
-                    {groupOptions.map((option) => {
-                      const checked = (eventModalDraft.groupIds ?? []).includes(option.id);
-                      return (
-                        <label
-                          key={option.id}
-                          className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm"
-                        >
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 rounded border border-input"
-                            checked={checked}
-                            onChange={(event) => toggleEventModalGroup(option.id, event.target.checked)}
-                          />
-                          <span>{option.name}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
+                  renderGroupSelectionRows(eventModalDraft.groupIds ?? [], toggleEventModalGroup)
                 ) : (
                   <p className="text-xs text-muted-foreground">尚未配置组别，可先在"组别设置"内新增。</p>
                 )}
@@ -1078,25 +1315,10 @@ export function CompetitionDetailPanel({
                     <div className="space-y-2">
                       <Label>适用组别</Label>
                       {groupOptions.length ? (
-                        <div className="flex flex-wrap gap-2">
-                          {groupOptions.map((option) => {
-                            const checked = (event.groupIds ?? []).includes(option.id);
-                            return (
-                              <label
-                                key={`${event.id ?? index}-${option.id}`}
-                                className="flex items-center gap-1 rounded-md border border-input px-2 py-1 text-xs"
-                              >
-                                <input
-                                  type="checkbox"
-                                  className="h-3 w-3"
-                                  checked={checked}
-                                  onChange={(evt) => handleEventGroupToggle(index, option.id, evt.target.checked)}
-                                />
-                                <span>{option.name}</span>
-                              </label>
-                            );
-                          })}
-                        </div>
+                        renderGroupSelectionRows(
+                          event.groupIds ?? [],
+                          (groupId, checked) => handleEventGroupToggle(index, groupId, checked)
+                        )
                       ) : (
                         <p className="text-xs text-muted-foreground">尚未配置组别，本项目默认对全部组别生效。</p>
                       )}
@@ -1144,14 +1366,24 @@ export function CompetitionDetailPanel({
                     <div key={groupId || index} className="space-y-3 rounded-md border border-dashed border-border p-4">
                       <div className="flex items-center justify-between">
                         <span className="text-sm font-medium">组别信息</span>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => (groupId ? handleAddEventForGroup(groupId) : openEventModalWithGroups([]))}
-                          disabled={!groupId}
-                        >
-                          新增项目
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => (groupId ? handleAddEventForGroup(groupId) : openEventModalWithGroups([]))}
+                            disabled={!groupId}
+                          >
+                            新增项目
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-destructive"
+                            onClick={() => handleRemoveGroup(index)}
+                          >
+                            删除组别
+                          </Button>
+                        </div>
                       </div>
                       <div className="grid gap-3 md:grid-cols-2">
                         <div className="space-y-2">
@@ -1218,7 +1450,7 @@ export function CompetitionDetailPanel({
                             onClick={() => (groupId ? handleAddEventForGroup(groupId) : openEventModalWithGroups([]))}
                             disabled={!groupId}
                           >
-                            添加项目
+                            新增项目
                           </Button>
                         </div>
                         {eventsForGroup.length ? (
