@@ -30,8 +30,9 @@ const importSchema = z.object({
   teams: z
     .array(
       z.object({
-        name: z.string().min(1),
-        contactPhone: z.string().optional(),
+        name: z.string().trim().min(1).max(100),
+        shortName: z.string().trim().max(50).optional().nullable(),
+        contactPhone: z.string().trim().min(1).optional(),
         members: z.array(teamMemberSchema).default([])
       })
     )
@@ -50,14 +51,18 @@ adminRouter.post(
         teamId: string;
         userId: string;
         name: string;
+        shortName: string | null;
         username: string;
         password: string;
       }> = [];
 
       for (const team of payload.teams) {
+        const name = team.name.trim();
+        const shortName = team.shortName?.trim() || null;
+        const contactPhone = team.contactPhone?.trim() || null;
         const password = generateRandomPassword();
         const passwordHash = await bcrypt.hash(password, 10);
-        const displayName = team.name;
+        const displayName = shortName ?? name;
 
         const userResult = await client.query(
           `
@@ -65,25 +70,26 @@ adminRouter.post(
             VALUES ($1, $2, $3, $4)
             RETURNING id
           `,
-          [team.contactPhone ?? null, passwordHash, displayName, 'team']
+          [contactPhone, passwordHash, displayName, 'team']
         );
 
         const userId = userResult.rows[0].id;
 
         const teamResult = await client.query(
           `
-            INSERT INTO teams (name, contact_phone, members, user_id)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO teams (name, short_name, contact_phone, members, user_id)
+            VALUES ($1, $2, $3, $4, $5)
             RETURNING id
           `,
-          [team.name, team.contactPhone ?? null, team.members ?? [], userId]
+          [name, shortName, contactPhone, team.members ?? [], userId]
         );
 
         imported.push({
           teamId: teamResult.rows[0].id,
           userId,
-          name: team.name,
-          username: team.contactPhone ?? userId,
+          name,
+          shortName,
+          username: contactPhone ?? userId,
           password
         });
       }
@@ -107,6 +113,7 @@ adminRouter.get('/teams/export', async (_req, res, next) => {
         SELECT
           t.id,
           t.name,
+          t.short_name,
           t.contact_phone,
           t.members,
           u.id AS user_id,
@@ -122,6 +129,7 @@ adminRouter.get('/teams/export', async (_req, res, next) => {
       teams: rows.map((row) => ({
         teamId: row.id,
         name: row.name,
+        shortName: row.short_name,
         contactPhone: row.contact_phone,
         members: row.members ?? [],
         account: {
