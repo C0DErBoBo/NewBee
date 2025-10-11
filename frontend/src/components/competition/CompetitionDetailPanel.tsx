@@ -43,7 +43,13 @@ type DetailTab = "basic" | "events" | "groups" | "rules" | "registration";
 
 type RulesKey = keyof CompetitionRuleInput;
 
-type EditableEvent = CompetitionEventInput & { id?: string; groupIds: string[] };
+type GroupVariantSelection = Record<string, { male?: boolean; female?: boolean }>;
+
+type EditableEvent = CompetitionEventInput & {
+  id?: string;
+  groupIds: string[];
+  groupVariants: GroupVariantSelection;
+};
 type EditableGroup = CompetitionGroupInput & { id?: string };
 type GroupOption = { id: string; name: string; gender: EditableGroup["gender"] };
 
@@ -122,6 +128,88 @@ const detectGroupGender = (name: string): EditableGroup["gender"] | null => {
   return null;
 };
 
+const applyVariantToggle = (
+  variants: GroupVariantSelection | undefined,
+  groupId: string,
+  gender: "male" | "female",
+  checked: boolean,
+  groupGender: EditableGroup["gender"] | undefined
+): GroupVariantSelection => {
+  const next: GroupVariantSelection = { ...(variants ?? {}) };
+  const currentEntry = next[groupId] ?? {};
+  const currentMale = Boolean(currentEntry.male);
+  const currentFemale = Boolean(currentEntry.female);
+
+  let nextMale = currentMale;
+  let nextFemale = currentFemale;
+
+  if (groupGender === "male") {
+    nextMale = checked;
+    nextFemale = false;
+  } else if (groupGender === "female") {
+    nextMale = false;
+    nextFemale = checked;
+  } else {
+    if (gender === "male") {
+      nextMale = checked;
+    } else {
+      nextFemale = checked;
+    }
+  }
+
+  if (!nextMale && !nextFemale) {
+    delete next[groupId];
+  } else {
+    next[groupId] = {
+      ...(nextMale ? { male: true } : {}),
+      ...(nextFemale ? { female: true } : {})
+    };
+  }
+
+  return next;
+};
+
+const collectGroupIdsFromVariants = (variants: GroupVariantSelection): string[] =>
+  Object.entries(variants)
+    .filter(([, value]) => Boolean(value?.male) || Boolean(value?.female))
+    .map(([id]) => id);
+
+const sanitizeVariantsForConfig = (
+  variants: GroupVariantSelection,
+  predicate: (groupId: string) => boolean
+): GroupVariantSelection =>
+  Object.fromEntries(
+    Object.entries(variants)
+      .filter(([id, value]) => predicate(id) && (value?.male || value?.female))
+      .map(([id, value]) => [
+        id,
+        {
+          ...(value.male ? { male: true } : {}),
+          ...(value.female ? { female: true } : {})
+        }
+      ])
+  );
+
+const parseAssignedGroupVariants = (value: unknown): GroupVariantSelection => {
+  if (!value || typeof value !== "object") return {};
+  const source = value as Record<string, unknown>;
+  const result: GroupVariantSelection = {};
+  Object.entries(source).forEach(([groupId, raw]) => {
+    if (!raw || typeof raw !== "object") {
+      return;
+    }
+    const male = Boolean((raw as { male?: unknown }).male);
+    const female = Boolean((raw as { female?: unknown }).female);
+    if (male || female) {
+      result[groupId] = {
+        ...(male ? { male: true } : {}),
+        ...(female ? { female: true } : {})
+      };
+    }
+  });
+  return result;
+};
+
 
 const toInputDateTime = (value?: string) => {
   if (!value) return "";
@@ -152,6 +240,9 @@ const safeJsonParse = <T,>(value: string, fallback: T): { data: T; error: string
 const mapDetailToEditable = (detail: CompetitionDetail): EditableCompetition => {
   const groupIdToName = new Map(
     detail.groups.map((group) => [group.id ?? "", (group.name ?? "").trim()])
+  );
+  const groupIdToGender = new Map(
+    detail.groups.map((group) => [group.id ?? "", group.gender ?? "mixed"])
   );
   const groupNameToId = new Map(
     detail.groups
@@ -189,22 +280,107 @@ const mapDetailToEditable = (detail: CompetitionDetail): EditableCompetition => 
             (value): value is string => typeof value === "string" && value.trim().length > 0
           )
         : [];
+      let configGroupVariants = parseAssignedGroupVariants(
+        (baseConfig as { assignedGroupVariants?: unknown }).assignedGroupVariants
+      );
+      if (Object.keys(configGroupVariants).length === 0 && configGroupNames.length > 0) {
+        const derived: GroupVariantSelection = {};
+        configGroupNames.forEach((rawName) => {
+          const trimmed = rawName.trim();
+          if (!trimmed) return;
+          const [baseName, variantTag] = trimmed.split("|");
+          const targetId = groupNameToId.get((baseName ?? "").trim());
+          if (!targetId) return;
+          const entry = derived[targetId] ?? {};
+          const targetGender = groupIdToGender.get(targetId) ?? "mixed";
+          if (!variantTag) {
+            if (targetGender === "male") {
+              entry.male = true;
+            } else if (targetGender === "female") {
+              entry.female = true;
+            } else {
+              entry.male = true;
+              entry.female = true;
+            }
+          } else if (variantTag === "male") {
+            entry.male = true;
+          } else if (variantTag === "female") {
+            entry.female = true;
+          } else {
+            entry.male = true;
+            entry.female = true;
+          }
+          derived[targetId] = entry;
+        });
+        configGroupVariants = derived;
+      }
 
       const initialIds = Array.from(new Set([...directGroupIds, ...configGroupIds]));
       let resolvedGroupIds = initialIds.filter((id) => groupIdToName.has(id));
 
       if (resolvedGroupIds.length === 0 && configGroupNames.length > 0) {
         const fallbackIds = configGroupNames
-          .map((name) => groupNameToId.get(name.trim()))
+          .map((name) => {
+            const [baseName] = name.split("|");
+            return groupNameToId.get(baseName.trim());
+          })
           .filter((value): value is string => typeof value === "string" && value.length > 0);
         if (fallbackIds.length > 0) {
           resolvedGroupIds = Array.from(new Set(fallbackIds));
         }
       }
 
-      const resolvedGroupNames = resolvedGroupIds
-        .map((id) => groupIdToName.get(id)?.trim())
-        .filter((name): name is string => Boolean(name) && name.length > 0);
+
+      const variantSourceIds = new Set<string>([
+        ...resolvedGroupIds,
+        ...Object.keys(configGroupVariants)
+      ]);
+      const groupVariants: GroupVariantSelection = {};
+
+      variantSourceIds.forEach((groupId) => {
+        if (!groupIdToName.has(groupId)) return;
+        const groupGender = groupIdToGender.get(groupId) ?? "mixed";
+        const fromConfig = configGroupVariants[groupId];
+        let maleSelected = Boolean(fromConfig?.male);
+        let femaleSelected = Boolean(fromConfig?.female);
+
+        if (groupGender === "male") {
+          maleSelected = maleSelected || resolvedGroupIds.includes(groupId);
+          femaleSelected = false;
+        } else if (groupGender === "female") {
+          femaleSelected = femaleSelected || resolvedGroupIds.includes(groupId);
+          maleSelected = false;
+        } else if (!fromConfig && resolvedGroupIds.includes(groupId)) {
+          maleSelected = true;
+          femaleSelected = true;
+        }
+
+        if (maleSelected || femaleSelected) {
+          groupVariants[groupId] = {
+            ...(maleSelected ? { male: true } : {}),
+            ...(femaleSelected ? { female: true } : {})
+          };
+        }
+      });
+
+      const finalGroupIds = collectGroupIdsFromVariants(groupVariants);
+      const resolvedGroupNames = Object.entries(
+        sanitizeVariantsForConfig(groupVariants, () => true)
+      ).flatMap(([id, value]) => {
+        const baseName = groupIdToName.get(id)?.trim();
+        if (!baseName) return [] as string[];
+        const gender = groupIdToGender.get(id) ?? "mixed";
+        if (gender === "male") {
+          return value?.male ? [baseName] : [];
+        }
+        if (gender === "female") {
+          return value?.female ? [baseName] : [];
+        }
+        const names: string[] = [];
+        if (value?.male) names.push(`${baseName}|male`);
+        if (value?.female) names.push(`${baseName}|female`);
+        return names;
+      });
 
       return {
         id: event.id,
@@ -214,12 +390,14 @@ const mapDetailToEditable = (detail: CompetitionDetail): EditableCompetition => 
         competitionMode: event.competitionMode ?? defaultCompetitionModeForCategory(event.category),
         scoringType: event.scoringType ?? defaultScoringTypeForCategory(event.category),
         isCustom: event.isCustom,
-        groupIds: resolvedGroupIds,
+        groupIds: finalGroupIds,
+        groupVariants,
         config: {
           ...baseConfig,
-          assignedGroups: resolvedGroupIds,
+          assignedGroups: finalGroupIds,
           assignedGroupNames:
-            resolvedGroupNames.length > 0 ? resolvedGroupNames : configGroupNames ?? []
+            resolvedGroupNames.length > 0 ? resolvedGroupNames : configGroupNames ?? [],
+          assignedGroupVariants: sanitizeVariantsForConfig(groupVariants, () => true)
         }
       };
     }),
@@ -298,6 +476,11 @@ export function CompetitionDetailPanel({
     [groupOptions]
   );
 
+  const groupIdToGenderMap = useMemo(
+    () => new Map(groupOptions.map((option) => [option.id, option.gender])),
+    [groupOptions]
+  );
+
   const separatedGroupOptions = useMemo(() => {
     const male: GroupOption[] = [];
     const female: GroupOption[] = [];
@@ -321,7 +504,8 @@ export function CompetitionDetailPanel({
 
   const renderGroupSelectionRows = (
     selectedIds: string[],
-    onToggle: (groupId: string, checked: boolean) => void
+    variants: GroupVariantSelection,
+    onToggle: (groupId: string, gender: "male" | "female", checked: boolean) => void
   ) => {
     const rowConfigs: Array<{
       key: "male" | "female";
@@ -340,7 +524,17 @@ export function CompetitionDetailPanel({
             <span className={cn("text-xs font-semibold", colorClass)}>{label}</span>
             {options.length ? (
               options.map((option) => {
-                const checked = selectedIds.includes(option.id);
+                const variantGender: "male" | "female" = key;
+                const variantRecord = variants[option.id];
+                const fallbackSelected = selectedIds.includes(option.id);
+                let checked: boolean;
+                if (option.gender === "male") {
+                  checked = variantRecord?.male ?? fallbackSelected;
+                } else if (option.gender === "female") {
+                  checked = variantRecord?.female ?? fallbackSelected;
+                } else {
+                  checked = variantRecord ? Boolean(variantRecord[variantGender]) : fallbackSelected;
+                }
                 return (
                   <label
                     key={`${option.id}-${key}`}
@@ -350,7 +544,7 @@ export function CompetitionDetailPanel({
                       type="checkbox"
                       className="h-3 w-3"
                       checked={checked}
-                      onChange={(event) => onToggle(option.id, event.target.checked)}
+                      onChange={(event) => onToggle(option.id, variantGender, event.target.checked)}
                     />
                     <span className={colorClass}>{option.name}</span>
                   </label>
@@ -363,6 +557,46 @@ export function CompetitionDetailPanel({
         ))}
       </div>
     );
+  };
+
+  const buildStorageNames = (
+    variants: GroupVariantSelection,
+    predicate: (groupId: string) => boolean
+  ) => {
+    const names: string[] = [];
+    Object.entries(variants).forEach(([groupId, value]) => {
+      if (!predicate(groupId)) return;
+      const baseName = groupIdToNameMap.get(groupId)?.trim();
+      if (!baseName) return;
+      const gender = groupIdToGenderMap.get(groupId) ?? "mixed";
+      if (gender === "male") {
+        if (value?.male) names.push(baseName);
+      } else if (gender === "female") {
+        if (value?.female) names.push(baseName);
+      } else {
+        if (value?.male) names.push(`${baseName}|male`);
+        if (value?.female) names.push(`${baseName}|female`);
+      }
+    });
+    return names;
+  };
+
+  const buildDisplayNames = (variants: GroupVariantSelection) => {
+    const names: string[] = [];
+    Object.entries(variants).forEach(([groupId, value]) => {
+      const baseName = groupIdToNameMap.get(groupId)?.trim();
+      if (!baseName) return;
+      const gender = groupIdToGenderMap.get(groupId) ?? "mixed";
+      if (gender === "male") {
+        if (value?.male) names.push(baseName);
+      } else if (gender === "female") {
+        if (value?.female) names.push(baseName);
+      } else {
+        if (value?.male) names.push(`${baseName}（男子）`);
+        if (value?.female) names.push(`${baseName}（女子）`);
+      }
+    });
+    return names;
   };
 
   const eventsGroupedById = useMemo(() => {
@@ -482,15 +716,27 @@ export function CompetitionDetailPanel({
         startAt: toIsoString(draft.basic.startAt),
         endAt: toIsoString(draft.basic.endAt),
         events: draft.events
-          .map(({ name, category, unitType, competitionMode, scoringType, isCustom, config, groupIds }) => {
+          .map(({
+            name,
+            category,
+            unitType,
+            competitionMode,
+            scoringType,
+            isCustom,
+            config,
+            groupIds,
+            groupVariants
+          }) => {
             const trimmedName = name.trim();
-            const selectedGroupIdList = Array.isArray(groupIds)
-              ? groupIds.filter((value) => value.length > 0)
-              : [];
-            const persistedGroupIds = selectedGroupIdList.filter((value) => !value.startsWith("temp-"));
-            const selectedGroupNames = selectedGroupIdList
-              .map((value) => groupIdToNameMap.get(value)?.trim())
-              .filter((value): value is string => Boolean(value) && value.length > 0);
+            const variantIds = collectGroupIdsFromVariants(groupVariants ?? {});
+            const selectedGroupIdList = (variantIds.length ? variantIds : Array.isArray(groupIds) ? groupIds : [])
+              .filter((value) => typeof value === "string" && value.length > 0);
+            const persistedVariants = sanitizeVariantsForConfig(
+              groupVariants ?? {},
+              (id) => !id.startsWith("temp-")
+            );
+            const persistedGroupIds = collectGroupIdsFromVariants(persistedVariants);
+            const persistedGroupNames = buildStorageNames(persistedVariants, () => true);
             return {
               name: trimmedName,
               category,
@@ -502,7 +748,8 @@ export function CompetitionDetailPanel({
               config: {
                 ...(config ?? {}),
                 assignedGroups: persistedGroupIds,
-                assignedGroupNames: selectedGroupNames
+                assignedGroupNames: persistedGroupNames,
+                assignedGroupVariants: persistedVariants
               }
             };
           })
@@ -636,33 +883,73 @@ export function CompetitionDetailPanel({
     });
   };
 
-  const handleEventGroupToggle = (eventIndex: number, groupId: string, checked: boolean) => {
+  const handleEventGroupToggle = (
+    eventIndex: number,
+    groupId: string,
+    gender: "male" | "female",
+    checked: boolean
+  ) => {
     setDraft((prev) => {
       if (!prev) return prev;
       const nextEvents = prev.events.map((event, idx) => {
         if (idx !== eventIndex) return event;
-        const currentGroupIds = Array.isArray(event.groupIds) ? event.groupIds : [];
-        const nextGroupIds = checked
-          ? Array.from(new Set([...currentGroupIds, groupId]))
-          : currentGroupIds.filter((value) => value !== groupId);
-        return { ...event, groupIds: nextGroupIds };
+        const nextVariants = applyVariantToggle(
+          event.groupVariants,
+          groupId,
+          gender,
+          checked,
+          groupIdToGenderMap.get(groupId)
+        );
+        const nextGroupIds = collectGroupIdsFromVariants(nextVariants);
+        const persistedVariants = sanitizeVariantsForConfig(
+          nextVariants,
+          (id) => !id.startsWith("temp-")
+        );
+        const persistedGroupIds = collectGroupIdsFromVariants(persistedVariants);
+        const persistedGroupNames = buildStorageNames(persistedVariants, () => true);
+        return {
+          ...event,
+          groupIds: nextGroupIds,
+          groupVariants: nextVariants,
+          config: {
+            ...(event.config ?? {}),
+            assignedGroups: persistedGroupIds,
+            assignedGroupNames: persistedGroupNames,
+            assignedGroupVariants: persistedVariants
+          }
+        };
       });
       setHasPendingChanges(true);
       return { ...prev, events: nextEvents };
     });
   };
 
-  const buildEventDraft = (groupIds: string[]): EditableEvent => ({
-    id: undefined,
-    name: "",
-    category: "track",
-    unitType: "individual",
-    competitionMode: defaultCompetitionModeForCategory("track"),
-    scoringType: defaultScoringTypeForCategory("track"),
-    isCustom: false,
-    groupIds,
-    config: {}
-  });
+  const buildEventDraft = (groupIds: string[]): EditableEvent => {
+    const initialVariants: GroupVariantSelection = {};
+    groupIds.forEach((groupId) => {
+      const gender = groupIdToGenderMap.get(groupId) ?? "mixed";
+      if (gender === "male") {
+        initialVariants[groupId] = { male: true };
+      } else if (gender === "female") {
+        initialVariants[groupId] = { female: true };
+      } else {
+        initialVariants[groupId] = { male: true, female: true };
+      }
+    });
+    const normalizedGroupIds = collectGroupIdsFromVariants(initialVariants);
+    return {
+      id: undefined,
+      name: "",
+      category: "track",
+      unitType: "individual",
+      competitionMode: defaultCompetitionModeForCategory("track"),
+      scoringType: defaultScoringTypeForCategory("track"),
+      isCustom: false,
+      groupIds: normalizedGroupIds,
+      groupVariants: initialVariants,
+      config: {}
+    };
+  };
 
   const openEventModalWithGroups = (groupIds: string[]) => {
     setEventModalDraft(buildEventDraft(groupIds));
@@ -680,14 +967,22 @@ export function CompetitionDetailPanel({
     setEventModalDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
   };
 
-  const toggleEventModalGroup = (groupId: string, checked: boolean) => {
+  const toggleEventModalGroup = (groupId: string, gender: "male" | "female", checked: boolean) => {
     setEventModalDraft((prev) => {
       if (!prev) return prev;
-      const currentGroupIds = Array.isArray(prev.groupIds) ? prev.groupIds : [];
-      const nextGroupIds = checked
-        ? Array.from(new Set([...currentGroupIds, groupId]))
-        : currentGroupIds.filter((value) => value !== groupId);
-      return { ...prev, groupIds: nextGroupIds };
+      const nextVariants = applyVariantToggle(
+        prev.groupVariants,
+        groupId,
+        gender,
+        checked,
+        groupIdToGenderMap.get(groupId)
+      );
+      const nextGroupIds = collectGroupIdsFromVariants(nextVariants);
+      return {
+        ...prev,
+        groupIds: nextGroupIds,
+        groupVariants: nextVariants
+      };
     });
   };
 
@@ -699,13 +994,19 @@ export function CompetitionDetailPanel({
       return;
     }
 
-    const selectedGroupIds = Array.isArray(eventModalDraft.groupIds)
-      ? eventModalDraft.groupIds.filter((value) => value.length > 0)
-      : [];
+    const variantSelections = eventModalDraft.groupVariants ?? {};
+    const selectedGroupIds = collectGroupIdsFromVariants(variantSelections);
     if ((draft?.groups.length ?? 0) > 0 && selectedGroupIds.length === 0) {
       setEventModalError("请至少选择一个适用组别");
       return;
     }
+
+    const persistedVariants = sanitizeVariantsForConfig(
+      variantSelections,
+      (id) => !id.startsWith("temp-")
+    );
+    const persistedGroupIds = collectGroupIdsFromVariants(persistedVariants);
+    const persistedGroupNames = buildStorageNames(persistedVariants, () => true);
 
     setDraft((prev) => {
       if (!prev) return prev;
@@ -723,7 +1024,13 @@ export function CompetitionDetailPanel({
             scoringType: eventModalDraft.scoringType,
             isCustom: eventModalDraft.isCustom ?? false,
             groupIds: selectedGroupIds,
-            config: eventModalDraft.config ?? {}
+            groupVariants: deepClone(variantSelections),
+            config: {
+              ...(eventModalDraft.config ?? {}),
+              assignedGroups: persistedGroupIds,
+              assignedGroupNames: persistedGroupNames,
+              assignedGroupVariants: persistedVariants
+            }
           }
         ]
       };
@@ -901,10 +1208,31 @@ export function CompetitionDetailPanel({
         ...prev,
         events:
           removedGroupId !== null
-            ? prev.events.map((event) => ({
-                ...event,
-                groupIds: (event.groupIds ?? []).filter((groupId) => groupId !== removedGroupId)
-              }))
+            ? prev.events.map((event) => {
+                if (!event.groupIds?.includes(removedGroupId) && !event.groupVariants?.[removedGroupId]) {
+                  return event;
+                }
+                const nextVariants = { ...event.groupVariants };
+                delete nextVariants[removedGroupId];
+                const nextGroupIds = (event.groupIds ?? []).filter((groupId) => groupId !== removedGroupId);
+                const persistedVariants = sanitizeVariantsForConfig(
+                  nextVariants,
+                  (id) => !id.startsWith("temp-")
+                );
+                const persistedGroupIds = collectGroupIdsFromVariants(persistedVariants);
+                const persistedGroupNames = buildStorageNames(persistedVariants, () => true);
+                return {
+                  ...event,
+                  groupIds: nextGroupIds,
+                  groupVariants: nextVariants,
+                  config: {
+                    ...(event.config ?? {}),
+                    assignedGroups: persistedGroupIds,
+                    assignedGroupNames: persistedGroupNames,
+                    assignedGroupVariants: persistedVariants
+                  }
+                };
+              })
             : prev.events,
         groups: prev.groups.filter((_, idx) => idx !== index)
       };
@@ -1111,7 +1439,7 @@ export function CompetitionDetailPanel({
               <div className="space-y-2">
                 <Label>适用组别</Label>
                 {groupOptions.length ? (
-                  renderGroupSelectionRows(eventModalDraft.groupIds ?? [], toggleEventModalGroup)
+                  renderGroupSelectionRows(eventModalDraft.groupIds ?? [], eventModalDraft.groupVariants ?? {}, toggleEventModalGroup)
                 ) : (
                   <p className="text-xs text-muted-foreground">尚未配置组别，可先在"组别设置"内新增。</p>
                 )}
@@ -1317,21 +1645,36 @@ export function CompetitionDetailPanel({
                       {groupOptions.length ? (
                         renderGroupSelectionRows(
                           event.groupIds ?? [],
-                          (groupId, checked) => handleEventGroupToggle(index, groupId, checked)
+                          event.groupVariants ?? {},
+                          (groupId, gender, checked) => handleEventGroupToggle(index, groupId, gender, checked)
                         )
                       ) : (
                         <p className="text-xs text-muted-foreground">尚未配置组别，本项目默认对全部组别生效。</p>
                       )}
                       {groupOptions.length > 0 ? (
-                        (event.groupIds ?? []).length ? (
-                          <p className="text-xs text-muted-foreground">
-                            已选择
-                            {(event.groupIds ?? []).map((id) => groupIdToNameMap.get(id) ?? "未知组别").join("、")}
-                          </p>
-                        ) : (
-                          <p className="text-xs font-semibold text-red-600">未添加到任何组别。</p>
-                        )
+                        (() => {
+                          const summaryNames = buildDisplayNames(event.groupVariants ?? {});
+                          if (summaryNames.length > 0) {
+                            return (
+                              <p className="text-xs text-muted-foreground">
+                                已选择
+                                {summaryNames.join("、")}
+                              </p>
+                            );
+                          }
+                          if ((event.groupIds ?? []).length > 0) {
+                            return (
+                              <p className="text-xs text-muted-foreground">
+                                已选择
+                                {(event.groupIds ?? []).map((id) => groupIdToNameMap.get(id) ?? "未知组").join("、")}
+                              </p>
+                            );
+                          }
+                          return <p className="text-xs font-semibold text-red-600">未关联任何组别</p>;
+                        })()
                       ) : null}
+
+
                     </div>
 
                     <div className="flex justify-end">

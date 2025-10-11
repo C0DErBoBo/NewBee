@@ -77,6 +77,13 @@ const standardEvents = [
     scoringType: 'distance'
   }
 ];
+const groupVariantEntrySchema = z.object({
+  male: z.boolean().optional(),
+  female: z.boolean().optional()
+});
+
+const groupVariantsSchema = z.record(groupVariantEntrySchema);
+
 const eventSchema = z.object({
   name: z.string().min(1),
   category: z.enum(['track', 'field', 'all_round', 'fun', 'score']),
@@ -85,7 +92,8 @@ const eventSchema = z.object({
   scoringType: z.enum(['timing', 'distance', 'height']).optional(),
   isCustom: z.boolean().default(false).optional(),
   groupIds: z.array(z.string().uuid()).optional(),
-  config: z.record(z.unknown()).default({}).optional()
+  config: z.record(z.unknown()).default({}).optional(),
+  groupVariants: groupVariantsSchema.optional()
 });
 
 
@@ -108,6 +116,201 @@ const defaultScoringTypeForCategory = (category: string) => {
       return 'distance';
   }
 };
+
+type GroupVariantRecord = Record<string, { male?: boolean; female?: boolean }>;
+type GroupMeta = { name: string; gender: 'male' | 'female' | 'mixed' };
+
+const normalizeKeyName = (value?: string | null) =>
+  typeof value === 'string' ? value.trim().toLowerCase() : '';
+
+function sanitizeGroupVariants(input?: unknown): GroupVariantRecord {
+  if (!input || typeof input !== 'object') {
+    return {};
+  }
+  const entries = input as Record<string, unknown>;
+  const result: GroupVariantRecord = {};
+  Object.entries(entries).forEach(([groupId, rawValue]) => {
+    if (typeof groupId !== 'string' || !groupId || groupId.startsWith('temp-')) {
+      return;
+    }
+    if (!rawValue || typeof rawValue !== 'object') {
+      return;
+    }
+    const value = rawValue as { male?: unknown; female?: unknown };
+    const male = Boolean(value.male);
+    const female = Boolean(value.female);
+    if (!male && !female) {
+      return;
+    }
+    result[groupId] = {
+      ...(male ? { male: true } : {}),
+      ...(female ? { female: true } : {})
+    };
+  });
+  return result;
+}
+
+const collectGroupIdsFromVariants = (variants: GroupVariantRecord): string[] =>
+  Object.entries(variants)
+    .filter(([, value]) => Boolean(value?.male) || Boolean(value?.female))
+    .map(([groupId]) => groupId);
+
+function deriveVariantsFromGroupIds(
+  groupIds: unknown,
+  groupMeta: Map<string, GroupMeta>
+): GroupVariantRecord {
+  const result: GroupVariantRecord = {};
+  if (!Array.isArray(groupIds)) {
+    return result;
+  }
+  groupIds.forEach((rawId) => {
+    if (typeof rawId !== 'string' || !rawId || rawId.startsWith('temp-')) {
+      return;
+    }
+    const meta = groupMeta.get(rawId);
+    if (!meta) {
+      return;
+    }
+    if (meta.gender === 'male') {
+      result[rawId] = { male: true };
+    } else if (meta.gender === 'female') {
+      result[rawId] = { female: true };
+    } else {
+      result[rawId] = { male: true, female: true };
+    }
+  });
+  return result;
+}
+
+function deriveVariantsFromNames(
+  names: unknown,
+  groupMeta: Map<string, GroupMeta>
+): GroupVariantRecord {
+  const result: GroupVariantRecord = {};
+  if (!Array.isArray(names)) {
+    return result;
+  }
+  const metaByName = new Map<string, { id: string; gender: GroupMeta['gender'] }>();
+  groupMeta.forEach((meta, id) => {
+    const key = normalizeKeyName(meta.name);
+    if (key) {
+      metaByName.set(key, { id, gender: meta.gender });
+    }
+  });
+  names.forEach((raw) => {
+    if (typeof raw !== 'string') {
+      return;
+    }
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return;
+    }
+    const [baseName, variantTagRaw] = trimmed.split('|');
+    const lookup = metaByName.get(normalizeKeyName(baseName));
+    if (!lookup) {
+      return;
+    }
+    const variantTag = variantTagRaw?.trim().toLowerCase();
+    const current = result[lookup.id] ?? {};
+    if (!variantTag) {
+      if (lookup.gender === 'male') {
+        current.male = true;
+      } else if (lookup.gender === 'female') {
+        current.female = true;
+      } else {
+        current.male = true;
+        current.female = true;
+      }
+    } else if (variantTag === 'male') {
+      current.male = true;
+    } else if (variantTag === 'female') {
+      current.female = true;
+    } else {
+      current.male = true;
+      current.female = true;
+    }
+    result[lookup.id] = current;
+  });
+  return result;
+}
+
+function buildAssignedGroupNames(
+  variants: GroupVariantRecord,
+  groupMeta: Map<string, GroupMeta>
+): string[] {
+  const names: string[] = [];
+  Object.entries(variants).forEach(([groupId, value]) => {
+    if (!value) {
+      return;
+    }
+    const meta = groupMeta.get(groupId);
+    if (!meta) {
+      return;
+    }
+    const baseName = (meta.name ?? '').trim();
+    if (!baseName) {
+      return;
+    }
+    if (meta.gender === 'male') {
+      if (value.male) {
+        names.push(baseName);
+      }
+    } else if (meta.gender === 'female') {
+      if (value.female) {
+        names.push(baseName);
+      }
+    } else {
+      if (value.male) {
+        names.push(`${baseName}|male`);
+      }
+      if (value.female) {
+        names.push(`${baseName}|female`);
+      }
+    }
+  });
+  return names;
+}
+
+function normalizeConfigWithVariants(options: {
+  baseConfig: Record<string, unknown>;
+  groupIds?: readonly string[] | null;
+  variants?: GroupVariantRecord;
+  groupMeta: Map<string, GroupMeta>;
+}): Record<string, unknown> {
+  const { baseConfig, groupIds, variants, groupMeta } = options;
+  const baseAssignedVariants = baseConfig['assignedGroupVariants'];
+  const initialVariants = sanitizeGroupVariants(variants ?? baseAssignedVariants);
+  const derivedFromNames = deriveVariantsFromNames(baseConfig['assignedGroupNames'], groupMeta);
+  const derivedFromGroups = deriveVariantsFromGroupIds(
+    groupIds ?? baseConfig['assignedGroups'],
+    groupMeta
+  );
+  const mergedVariants = sanitizeGroupVariants({
+    ...derivedFromGroups,
+    ...derivedFromNames,
+    ...initialVariants
+  });
+
+  const cleanedGroupIds = Array.isArray(groupIds)
+    ? groupIds.filter((value): value is string => typeof value === 'string' && value.length > 0 && !value.startsWith('temp-'))
+    : [];
+  const finalGroupIds = Array.from(
+    new Set([...cleanedGroupIds, ...collectGroupIdsFromVariants(mergedVariants)])
+  );
+
+  const assignedGroupNames = buildAssignedGroupNames(mergedVariants, groupMeta);
+  const fallbackNames = Array.isArray(baseConfig['assignedGroupNames'])
+    ? (baseConfig['assignedGroupNames'] as unknown[])
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    : [];
+
+  return {
+    ...baseConfig,
+    assignedGroups: finalGroupIds,
+    assignedGroupNames: assignedGroupNames.length > 0 ? assignedGroupNames : fallbackNames,
+    assignedGroupVariants: mergedVariants
+  };
+}
 
 
 const groupSchema = z.object({
@@ -203,6 +406,16 @@ async function fetchCompetition(competitionId: string) {
     )
   ]);
 
+  const groupMeta = new Map<string, GroupMeta>();
+  groupsResult.rows.forEach((row) => {
+    if (row.id) {
+      groupMeta.set(row.id, {
+        name: row.name,
+        gender: row.gender
+      });
+    }
+  });
+
   return {
     id: competition.id,
     name: competition.name,
@@ -218,17 +431,28 @@ async function fetchCompetition(competitionId: string) {
       participantCount: competition.participant_count ?? 0,
       teamCount: competition.team_count ?? 0
     },
-    events: eventsResult.rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      category: row.category,
-      unitType: row.unit_type,
-      competitionMode: row.competition_mode ?? defaultCompetitionModeForCategory(row.category),
-      scoringType: row.scoring_type ?? defaultScoringTypeForCategory(row.category),
-      isCustom: row.is_custom,
-      config: row.config ?? {},
-      createdAt: row.created_at
-    })),
+    events: eventsResult.rows.map((row) => {
+      const baseConfig = (row.config ?? {}) as Record<string, unknown>;
+      const normalizedConfig = normalizeConfigWithVariants({
+        baseConfig,
+        groupIds: Array.isArray(baseConfig.assignedGroups)
+          ? (baseConfig.assignedGroups as string[])
+          : undefined,
+        variants: sanitizeGroupVariants(baseConfig.assignedGroupVariants),
+        groupMeta
+      });
+      return {
+        id: row.id,
+        name: row.name,
+        category: row.category,
+        unitType: row.unit_type,
+        competitionMode: row.competition_mode ?? defaultCompetitionModeForCategory(row.category),
+        scoringType: row.scoring_type ?? defaultScoringTypeForCategory(row.category),
+        isCustom: row.is_custom,
+        config: normalizedConfig,
+        createdAt: row.created_at
+      };
+    }),
     groups: groupsResult.rows.map((row) => ({
       id: row.id,
       name: row.name,
@@ -359,8 +583,21 @@ competitionRouter.post(
       );
       const competitionId = competitionResult.rows[0].id;
 
+      const groupsMeta = new Map<string, GroupMeta>();
+      (payload.groups ?? []).forEach((group) => {
+        if (group.id) {
+          groupsMeta.set(group.id, { name: group.name, gender: group.gender });
+        }
+      });
+
       if (payload.events?.length) {
         for (const event of payload.events) {
+          const normalizedConfig = normalizeConfigWithVariants({
+            baseConfig: event.config ?? {},
+            groupIds: event.groupIds ?? [],
+            variants: sanitizeGroupVariants(event.groupVariants),
+            groupMeta: groupsMeta
+          });
           await client.query(
             `
               INSERT INTO competition_events (competition_id, name, category, unit_type, competition_mode, scoring_type, is_custom, config)
@@ -374,7 +611,7 @@ competitionRouter.post(
               event.competitionMode ?? defaultCompetitionModeForCategory(event.category),
               event.scoringType ?? defaultScoringTypeForCategory(event.category),
               event.isCustom ?? false,
-              event.config ?? {}
+              normalizedConfig
             ]
           );
         }
@@ -485,6 +722,25 @@ competitionRouter.patch(
       const payload = updateCompetitionSchema.parse(req.body);
 
       await client.query('BEGIN');
+
+      const existingGroupsMetaResult = await client.query(
+        `
+          SELECT id, name, gender
+          FROM competition_groups
+          WHERE competition_id = $1
+        `,
+        [competitionId]
+      );
+      const existingGroupsMeta = new Map<string, GroupMeta>();
+      existingGroupsMetaResult.rows.forEach((row) => {
+        if (row.id) {
+          existingGroupsMeta.set(row.id, {
+            name: row.name,
+            gender: row.gender
+          });
+        }
+      });
+
       if (
         payload.name ||
         payload.location ||
@@ -522,10 +778,25 @@ competitionRouter.patch(
           'DELETE FROM competition_events WHERE competition_id = $1',
           [competitionId]
         );
+        let groupsMeta = existingGroupsMeta;
+        if (payload.groups && payload.groups.length > 0) {
+          groupsMeta = new Map<string, GroupMeta>();
+          payload.groups.forEach((group) => {
+            if (group.id) {
+              groupsMeta.set(group.id, { name: group.name, gender: group.gender });
+            }
+          });
+        }
         if (payload.events.length) {
           for (const event of payload.events) {
             const competitionMode = event.competitionMode ?? defaultCompetitionModeForCategory(event.category);
             const scoringType = event.scoringType ?? defaultScoringTypeForCategory(event.category);
+            const normalizedConfig = normalizeConfigWithVariants({
+              baseConfig: event.config ?? {},
+              groupIds: event.groupIds ?? [],
+              variants: sanitizeGroupVariants(event.groupVariants),
+              groupMeta: groupsMeta
+            });
             await client.query(
               `
                 INSERT INTO competition_events (competition_id, name, category, unit_type, competition_mode, scoring_type, is_custom, config)
@@ -539,7 +810,7 @@ competitionRouter.patch(
                 competitionMode,
                 scoringType,
                 event.isCustom ?? false,
-                event.config ?? {}
+                normalizedConfig
               ]
             );
           }
@@ -552,23 +823,44 @@ competitionRouter.patch(
           [competitionId]
         );
         for (const group of payload.groups) {
-          await client.query(
-            `
-              INSERT INTO competition_groups
-                (competition_id, name, gender, age_bracket, identity_type, max_participants, team_size, config)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            `,
-            [
-              competitionId,
-              group.name,
-              group.gender,
-              group.ageBracket ?? null,
-              group.identityType ?? null,
-              group.maxParticipants ?? null,
-              group.teamSize ?? null,
-              group.config ?? {}
-            ]
-          );
+          if (group.id) {
+            await client.query(
+              `
+                INSERT INTO competition_groups
+                  (id, competition_id, name, gender, age_bracket, identity_type, max_participants, team_size, config)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+              `,
+              [
+                group.id,
+                competitionId,
+                group.name,
+                group.gender,
+                group.ageBracket ?? null,
+                group.identityType ?? null,
+                group.maxParticipants ?? null,
+                group.teamSize ?? null,
+                group.config ?? {}
+              ]
+            );
+          } else {
+            await client.query(
+              `
+                INSERT INTO competition_groups
+                  (competition_id, name, gender, age_bracket, identity_type, max_participants, team_size, config)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+              `,
+              [
+                competitionId,
+                group.name,
+                group.gender,
+                group.ageBracket ?? null,
+                group.identityType ?? null,
+                group.maxParticipants ?? null,
+                group.teamSize ?? null,
+                group.config ?? {}
+              ]
+            );
+          }
         }
       }
 

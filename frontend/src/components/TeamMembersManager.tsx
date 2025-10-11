@@ -172,9 +172,11 @@ function detectGroupGender(name: string): EditableGroup['gender'] | null {
   return null;
 }
 
+type GroupVariantSelection = Record<string, { male?: boolean; female?: boolean }>;
+
 type EventAvailabilityMap = {
   globalEvents: Set<string>;
-  eventsByGroupName: Map<string, Set<string>>;
+  eventsByGroupVariant: Map<string, Set<string>>;
 };
 
 type AllowedEventsForGroup = {
@@ -182,13 +184,19 @@ type AllowedEventsForGroup = {
   enforce: boolean;
 };
 
-function resolveAllowedEventsForGroup(
-  normalizedGroupName: string,
-  isGroupValid: boolean,
-  requiresGroup: boolean,
-  validEventNames: Set<string>,
-  availability: EventAvailabilityMap
-): AllowedEventsForGroup {
+function resolveAllowedEventsForGroup({
+  variantKeys,
+  requiresGroup,
+  hasValidGroup,
+  validEventNames,
+  availability
+}: {
+  variantKeys: string[];
+  requiresGroup: boolean;
+  hasValidGroup: boolean;
+  validEventNames: Set<string>;
+  availability: EventAvailabilityMap;
+}): AllowedEventsForGroup {
   const filterByValidNames = (source: Set<string>) => {
     if (validEventNames.size === 0) {
       return new Set<string>(Array.from(source));
@@ -203,36 +211,46 @@ function resolveAllowedEventsForGroup(
   };
 
   if (!requiresGroup) {
-    if (!normalizedGroupName) {
+    if (variantKeys.length === 0) {
       return {
         allowed: filterByValidNames(new Set<string>(Array.from(validEventNames))),
         enforce: false
       };
     }
-    if (!isGroupValid) {
-      return { allowed: new Set<string>(), enforce: false };
-    }
-    const combined = new Set<string>();
-    availability.globalEvents.forEach((value) => combined.add(value));
-    const specific = availability.eventsByGroupName.get(normalizedGroupName);
-    if (specific) {
-      specific.forEach((value) => combined.add(value));
-    }
+  }
+
+  if (!hasValidGroup) {
     return {
-      allowed: filterByValidNames(combined),
-      enforce: false
+      allowed: new Set<string>(),
+      enforce: requiresGroup
     };
   }
 
-  if (!normalizedGroupName || !isGroupValid) {
-    return { allowed: new Set<string>(), enforce: true };
-  }
+  const allowed = new Set<string>(availability.globalEvents);
+  variantKeys.forEach((key) => {
+    const specific = availability.eventsByGroupVariant.get(key);
+    if (specific) {
+      specific.forEach((value) => allowed.add(value));
+    }
+  });
 
-  const specific = availability.eventsByGroupName.get(normalizedGroupName) ?? new Set<string>();
   return {
-    allowed: filterByValidNames(new Set<string>(Array.from(specific))),
+    allowed: filterByValidNames(allowed),
     enforce: true
   };
+}
+
+function normalizeGenderCode(value?: string | null): "male" | "female" | "" {
+  if (!value) return "";
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return "";
+  if (["male", "m", "man", "boy", "男", "男子", "男生"].includes(normalized)) {
+    return "male";
+  }
+  if (["female", "f", "woman", "girl", "女", "女子", "女生"].includes(normalized)) {
+    return "female";
+  }
+  return "";
 }
 
 export function TeamMembersManager(props: TeamMembersManagerProps) {
@@ -554,20 +572,38 @@ useEffect(() => {
         .filter((name): name is string => Boolean(name))
     );
   }, [eventOptions]);
-  const groupIdToNameMap = useMemo(() => {
+  const groupIdToGenderMap = useMemo(() => {
     const map = new Map<string, string>();
     groupOptions.forEach((group) => {
       const id = typeof group.id === 'string' ? group.id : '';
-      const name = normalizeName(group.name);
-      if (id && name) {
-        map.set(id, name);
+      if (id) {
+        map.set(id, group?.gender ?? 'mixed');
       }
     });
     return map;
   }, [groupOptions]);
+  const groupNameToMetaMap = useMemo(() => {
+    const map = new Map<string, { id: string; gender: string }>();
+    groupOptions.forEach((group) => {
+      const id = typeof group.id === 'string' ? group.id : '';
+      const name = normalizeName(group.name);
+      if (id && name) {
+        map.set(name, { id, gender: group?.gender ?? 'mixed' });
+      }
+    });
+    return map;
+  }, [groupOptions]);
+
   const eventAvailability = useMemo<EventAvailabilityMap>(() => {
     const globalEvents = new Set<string>();
-    const eventsByGroupName = new Map<string, Set<string>>();
+    const eventsByGroupVariant = new Map<string, Set<string>>();
+
+    const addEventToVariant = (eventName: string, groupId: string, variant: 'male' | 'female') => {
+      const key = `${groupId}|${variant}`;
+      const set = eventsByGroupVariant.get(key) ?? new Set<string>();
+      set.add(eventName);
+      eventsByGroupVariant.set(key, set);
+    };
 
     eventOptions.forEach((event) => {
       const eventName = normalizeName(event?.name);
@@ -577,40 +613,112 @@ useEffect(() => {
         ? event.groupIds.filter((value): value is string => typeof value === 'string' && value.length > 0)
         : [];
 
-      const assignedGroupNames = Array.isArray(
+      const assignedVariantsRaw = ((event?.config as { assignedGroupVariants?: unknown } | undefined)
+        ?.assignedGroupVariants ?? {}) as Record<string, unknown>;
+
+      const assignedVariants: GroupVariantSelection = {};
+      Object.entries(assignedVariantsRaw).forEach(([groupId, rawValue]) => {
+        if (!rawValue || typeof rawValue !== 'object') return;
+        const value = rawValue as { male?: unknown; female?: unknown };
+        const male = Boolean(value.male);
+        const female = Boolean(value.female);
+        if (!male && !female) return;
+        assignedVariants[groupId] = {
+          ...(male ? { male: true } : {}),
+          ...(female ? { female: true } : {})
+        };
+      });
+
+      const assignedGroupNamesRaw = Array.isArray(
         (event?.config as { assignedGroupNames?: unknown } | undefined)?.assignedGroupNames
       )
         ? ((event?.config as { assignedGroupNames?: unknown } | undefined)?.assignedGroupNames as unknown[])
-            .map((value) => (typeof value === 'string' ? normalizeName(value) : ''))
-            .filter((value) => value.length > 0)
         : [];
 
-      const targetGroupNames = new Set<string>();
-      groupIds.forEach((id) => {
-        const mappedName = groupIdToNameMap.get(id);
-        if (mappedName) {
-          targetGroupNames.add(mappedName);
-        }
-      });
-      assignedGroupNames.forEach((name) => {
-        if (name) {
-          targetGroupNames.add(name);
-        }
-      });
-
-      if (targetGroupNames.size === 0) {
-        globalEvents.add(eventName);
-      } else {
-        targetGroupNames.forEach((groupName) => {
-          const set = eventsByGroupName.get(groupName) ?? new Set<string>();
-          set.add(eventName);
-          eventsByGroupName.set(groupName, set);
-        });
+      if (Object.keys(assignedVariants).length === 0 && assignedGroupNamesRaw.length > 0) {
+        assignedGroupNamesRaw
+          .map((value) => (typeof value === 'string' ? value.trim() : ''))
+          .filter((value) => value.length > 0)
+          .forEach((rawName) => {
+            const [baseName, variantTag] = rawName.split('|');
+            const meta = groupNameToMetaMap.get(normalizeName(baseName));
+            if (!meta) return;
+            const entry = assignedVariants[meta.id] ?? {};
+            if (!variantTag) {
+              if (meta.gender === 'male') {
+                entry.male = true;
+              } else if (meta.gender === 'female') {
+                entry.female = true;
+              } else {
+                entry.male = true;
+                entry.female = true;
+              }
+            } else if (variantTag === 'male') {
+              entry.male = true;
+            } else if (variantTag === 'female') {
+              entry.female = true;
+            } else {
+              entry.male = true;
+              entry.female = true;
+            }
+            assignedVariants[meta.id] = entry;
+          });
       }
+
+      const unionIds = new Set<string>([...groupIds, ...Object.keys(assignedVariants)]);
+
+      if (unionIds.size === 0) {
+        globalEvents.add(eventName);
+        return;
+      }
+
+      unionIds.forEach((groupId) => {
+        const gender = groupIdToGenderMap.get(groupId) ?? 'mixed';
+        const variantConfig = assignedVariants[groupId];
+        let maleAllowed = Boolean(variantConfig?.male);
+        let femaleAllowed = Boolean(variantConfig?.female);
+        const baseHas = groupIds.includes(groupId);
+
+        if (gender === 'male') {
+          maleAllowed = maleAllowed || baseHas;
+          femaleAllowed = false;
+        } else if (gender === 'female') {
+          femaleAllowed = femaleAllowed || baseHas;
+          maleAllowed = false;
+        } else if (!variantConfig && baseHas) {
+          maleAllowed = true;
+          femaleAllowed = true;
+        }
+
+        if (maleAllowed) {
+          addEventToVariant(eventName, groupId, 'male');
+        }
+        if (femaleAllowed) {
+          addEventToVariant(eventName, groupId, 'female');
+        }
+      });
     });
 
-    return { globalEvents, eventsByGroupName };
-  }, [eventOptions, groupIdToNameMap]);
+    return { globalEvents, eventsByGroupVariant };
+  }, [eventOptions, groupIdToGenderMap, groupNameToMetaMap]);
+
+  const getVariantKeysForGroup = (groupName: string, memberGenderCode: "male" | "female" | "") => {
+    const meta = groupNameToMetaMap.get(groupName);
+    if (!meta) return [] as string[];
+    if (meta.gender === 'male') {
+      return [`${meta.id}|male`];
+    }
+    if (meta.gender === 'female') {
+      return [`${meta.id}|female`];
+    }
+    if (memberGenderCode === 'male') {
+      return [`${meta.id}|male`];
+    }
+    if (memberGenderCode === 'female') {
+      return [`${meta.id}|female`];
+    }
+    return [`${meta.id}|male`, `${meta.id}|female`];
+  };
 
   const requiresGroup = groupOptions.length > 0;
   const eventVisibility = useMemo(() => {
@@ -640,8 +748,16 @@ useEffect(() => {
       }
 
       const isGroupValid = Boolean(trimmedGroupName) && validGroupNames.has(trimmedGroupName);
+      const memberGenderCode = normalizeGenderCode(member.gender);
+      const variantKeys = getVariantKeysForGroup(groupNameRaw, memberGenderCode);
       const { allowed: allowedEventsForGroup, enforce: enforceAllowedEvents } =
-        resolveAllowedEventsForGroup(groupNameRaw, isGroupValid, requiresGroup, validEventNames, eventAvailability);
+        resolveAllowedEventsForGroup({
+          variantKeys,
+          requiresGroup,
+          hasValidGroup: isGroupValid,
+          validEventNames,
+          availability: eventAvailability
+        });
 
       member.events?.forEach((event, eventIndex) => {
         const eventName = normalizeName(event.name);
@@ -678,7 +794,7 @@ useEffect(() => {
       }
       return nextInvalidEvents;
     });
-  }, [membersDraft, requiresGroup, validGroupNames, validEventNames, eventAvailability]);
+  }, [membersDraft, requiresGroup, validGroupNames, validEventNames, eventAvailability, groupNameToMetaMap]);
 
   useEffect(() => {
     if (
@@ -1241,16 +1357,18 @@ useEffect(() => {
                       const normalizedGroupName = normalizeName(member.group);
                       const isGroupValid =
                         Boolean(trimmedGroupNameForRow) && validGroupNames.has(trimmedGroupNameForRow);
+                      const memberGenderCode = normalizeGenderCode(member.gender);
+                      const variantKeys = getVariantKeysForGroup(normalizedGroupName, memberGenderCode);
                       const {
                         allowed: allowedEventsForGroup,
                         enforce: enforceAllowedEvents
-                      } = resolveAllowedEventsForGroup(
-                        normalizedGroupName,
-                        isGroupValid,
+                      } = resolveAllowedEventsForGroup({
+                        variantKeys,
                         requiresGroup,
+                        hasValidGroup: isGroupValid,
                         validEventNames,
-                        eventAvailability
-                      );
+                        availability: eventAvailability
+                      });
                       const filteredEventOptions = eventOptions.filter((option) => {
                         const optionName = option?.name?.trim();
                         if (!optionName) return false;

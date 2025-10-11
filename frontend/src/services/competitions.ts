@@ -9,6 +9,7 @@ export interface CompetitionEventInput {
   isCustom?: boolean;
   groupIds?: string[];
   config?: Record<string, unknown>;
+  groupVariants?: Record<string, { male?: boolean; female?: boolean }>;
 }
 
 export interface CompetitionGroupInput {
@@ -20,6 +21,7 @@ export interface CompetitionGroupInput {
   maxParticipants?: number;
   teamSize?: number;
   config?: Record<string, unknown>;
+  groupVariants?: Record<string, { male?: boolean; female?: boolean }>;
 }
 
 export interface CompetitionRuleInput {
