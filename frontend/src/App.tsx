@@ -32,6 +32,7 @@ import { RegistrationManager } from './components/RegistrationManager';
 import type { TeamCompetitionOverview } from './components/RegistrationManager';
 import { TeamMembersManager } from './components/TeamMembersManager';
 import { CompetitionDetailPanel } from './components/competition/CompetitionDetailPanel';
+import { AdminTeamImportCard } from './components/AdminTeamImportCard';
 import { cn } from './lib/utils';
 
 type MainTab = 'competition' | 'registrations' | 'account' | 'admin';
@@ -709,6 +710,20 @@ export default function App() {
                     )}
                   </CardContent>
                 </Card>
+              )}
+
+              {isAdmin && (
+                <AdminTeamImportCard
+                  onSuccess={(teams) => {
+                    setToast({
+                      text: `成功导入 ${teams.length} 支队伍账号`,
+                      variant: 'success'
+                    });
+                    setError(null);
+                    accountsQuery.refetch();
+                  }}
+                  onError={(message) => setError(message)}
+                />
               )}
 
               {wizardState.visible && (

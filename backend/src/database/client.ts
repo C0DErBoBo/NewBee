@@ -73,6 +73,7 @@ export async function migrate() {
     CREATE TABLE IF NOT EXISTS teams (
       id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
       name TEXT NOT NULL,
+      short_name TEXT,
       contact_phone VARCHAR(20),
       members JSONB NOT NULL DEFAULT '[]'::JSONB,
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -171,6 +172,9 @@ export async function migrate() {
     ALTER TABLE competition_events
       ADD COLUMN IF NOT EXISTS competition_mode TEXT,
       ADD COLUMN IF NOT EXISTS scoring_type TEXT;
+
+    ALTER TABLE teams
+      ADD COLUMN IF NOT EXISTS short_name TEXT;
   `;
   await pool.query(migrationSql);
 }
